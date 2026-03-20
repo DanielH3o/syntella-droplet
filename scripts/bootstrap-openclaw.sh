@@ -14,6 +14,7 @@ say() { echo -e "\n==> $*"; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMPLATE_DIR="$SCRIPT_DIR/templates"
+DEFAULT_MODEL_CATALOG_PATH="$(cd "$SCRIPT_DIR/.." && pwd)/config/default-model-catalog.json"
 
 # Auto-source local .env file if present (for curl|bash runs where exports don't carry over)
 if [[ -f "$SCRIPT_DIR/.env" ]]; then
@@ -28,6 +29,8 @@ DISCORD_TARGET="${DISCORD_TARGET:-}"
 # Accept common aliases to reduce bootstrap env mistakes.
 DISCORD_HUMAN_ID="${DISCORD_HUMAN_ID:-${DISCORD_USER_ID:-${DISCORD_HUMAN:-}}}"
 MOONSHOT_API_KEY="${MOONSHOT_API_KEY:-}"
+OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 DISCORD_GUILD_ID=""
 DISCORD_CHANNEL_ID=""
 FRONTEND_ENABLED="${FRONTEND_ENABLED:-1}"
@@ -596,12 +599,6 @@ require_discord_inputs() {
     exit 1
   fi
 
-  if [[ -z "$MOONSHOT_API_KEY" ]]; then
-    echo "Missing MOONSHOT_API_KEY."
-    echo "Export MOONSHOT_API_KEY before running this script."
-    exit 1
-  fi
-
   # Normalize Discord user id (accept raw id, <@id>, <@!id>, or aliases).
   DISCORD_HUMAN_ID="$(echo "${DISCORD_HUMAN_ID}" | tr -cd '0-9')"
   if [[ -z "$DISCORD_HUMAN_ID" || ! "$DISCORD_HUMAN_ID" =~ ^[0-9]+$ ]]; then
@@ -795,6 +792,8 @@ setup_openclaw_env_file() {
 # Shared OpenClaw runtime environment
 # Source this file before starting OpenClaw-related processes.
 MOONSHOT_API_KEY="${MOONSHOT_API_KEY}"
+OPENAI_API_KEY="${OPENAI_API_KEY}"
+ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
 OPENCLAW_HOME="${HOME}"
 SYNTELLA_PORTAL_API_TOKEN="${SYNTELLA_PORTAL_API_TOKEN}"
 SYNTELLA_ENABLE_DROPLET_FRONTEND="${SYNTELLA_ENABLE_DROPLET_FRONTEND}"
@@ -821,6 +820,8 @@ setup_openclaw_global_dotenv() {
 # OpenClaw daemon-level environment fallback.
 # Gateway reads this even when it does not inherit shell env.
 MOONSHOT_API_KEY="${MOONSHOT_API_KEY}"
+OPENAI_API_KEY="${OPENAI_API_KEY}"
+ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
 EOF
   chmod 600 "$dotenv_file"
 }
@@ -1022,12 +1023,12 @@ verify_discord_dm_allowlist() {
 apply_openclaw_baseline_config() {
   local config_file="$HOME/.openclaw/openclaw.json"
 
-  python3 - "$config_file" "$DISCORD_CHANNEL_ID" <<'PY'
+  python3 - "$config_file" "$DISCORD_CHANNEL_ID" "$DEFAULT_MODEL_CATALOG_PATH" <<'PY'
 import json
 import os
 import sys
 
-config_path, channel_id = sys.argv[1:3]
+config_path, channel_id, catalog_path = sys.argv[1:4]
 cfg = {}
 if os.path.exists(config_path):
     try:
@@ -1046,12 +1047,108 @@ auth["mode"] = "token"
 gateway["auth"] = auth
 gateway["trustedProxies"] = ["127.0.0.1"]
 
+catalog = {}
+try:
+    with open(catalog_path, "r", encoding="utf-8") as f:
+        loaded_catalog = json.load(f)
+    if isinstance(loaded_catalog, dict):
+        catalog = loaded_catalog
+except Exception:
+    catalog = {}
+
+catalog_providers = catalog.get("providers") if isinstance(catalog.get("providers"), dict) else {}
+
+models_cfg = cfg.setdefault("models", {})
+providers = models_cfg.setdefault("providers", {})
+available_model_keys = set()
+
+for provider_name, provider_defaults in catalog_providers.items():
+    if not isinstance(provider_defaults, dict):
+        continue
+    provider_cfg = providers.get(provider_name)
+    if not isinstance(provider_cfg, dict):
+        provider_cfg = {}
+
+    for field, source_field in (
+        ("displayName", "displayName"),
+        ("description", "description"),
+        ("baseUrl", "baseUrl"),
+        ("api", "api"),
+    ):
+        value = provider_defaults.get(source_field)
+        if value and not provider_cfg.get(field):
+            provider_cfg[field] = value
+
+    env_key = str(provider_defaults.get("envKey") or "").strip()
+    env_value = os.environ.get(env_key, "").strip() if env_key else ""
+    if env_value:
+        provider_cfg["apiKey"] = env_value
+
+    existing_models = provider_cfg.get("models")
+    if not isinstance(existing_models, list):
+        existing_models = []
+    existing_by_id = {}
+    for model in existing_models:
+        if not isinstance(model, dict):
+            continue
+        model_id = str(model.get("id") or "").strip()
+        if model_id:
+            existing_by_id[model_id] = model
+
+    merged_models = []
+    seen = set()
+    for default_model in provider_defaults.get("models") or []:
+        if not isinstance(default_model, dict):
+            continue
+        model_id = str(default_model.get("id") or "").strip()
+        if not model_id:
+            continue
+        existing = existing_by_id.get(model_id, {})
+        merged = dict(existing)
+        for key, value in default_model.items():
+            if key == "cost" and isinstance(value, dict):
+                existing_cost = merged.get("cost")
+                merged_cost = dict(existing_cost) if isinstance(existing_cost, dict) else {}
+                for cost_key, cost_value in value.items():
+                    if cost_key not in merged_cost or merged_cost.get(cost_key) in (None, ""):
+                        merged_cost[cost_key] = cost_value
+                merged["cost"] = merged_cost
+                continue
+            if key not in merged or merged.get(key) in (None, "", [], {}):
+                merged[key] = value
+        merged["id"] = model_id
+        merged_models.append(merged)
+        seen.add(model_id)
+        available_model_keys.add(f"{provider_name}/{model_id}")
+
+    for model in existing_models:
+        if not isinstance(model, dict):
+            continue
+        model_id = str(model.get("id") or "").strip()
+        if not model_id or model_id in seen:
+            continue
+        merged_models.append(model)
+        available_model_keys.add(f"{provider_name}/{model_id}")
+
+    provider_cfg["models"] = merged_models
+    providers[provider_name] = provider_cfg
+
+models_cfg["providers"] = providers
+
 agents = cfg.setdefault("agents", {})
 defs = agents.setdefault("defaults", {})
 model = defs.get("model")
 if not isinstance(model, dict):
     model = {}
-model["primary"] = "moonshot/kimi-k2.5"
+preferred_model = (
+    ("openai/gpt-5-mini" if os.environ.get("OPENAI_API_KEY", "").strip() else "")
+    or ("anthropic/claude-sonnet-4-6" if os.environ.get("ANTHROPIC_API_KEY", "").strip() else "")
+    or ("moonshot/kimi-k2.5" if os.environ.get("MOONSHOT_API_KEY", "").strip() else "")
+    or str(catalog.get("defaultPrimaryModel") or "openai/gpt-5-mini")
+)
+current_primary = str(model.get("primary") or "").strip()
+if not current_primary or current_primary not in available_model_keys:
+    model["primary"] = preferred_model
 defs["model"] = model
 defs["workspace"] = os.path.expanduser("~/.openclaw/workspace/syntella")
 sandbox = defs.get("sandbox")

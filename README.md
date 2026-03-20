@@ -30,12 +30,15 @@ Opinionated bootstrap for running OpenClaw on a DigitalOcean Ubuntu droplet with
   - `<guildId>:<channelId>`
   - `guild:<guildId>/channel:<channelId>`
 - `DISCORD_HUMAN_ID` (owner user id for DM allowlist / privileged commands)
-- `MOONSHOT_API_KEY`
+- optional model provider keys:
+  - `OPENAI_API_KEY`
+  - `ANTHROPIC_API_KEY`
+  - `MOONSHOT_API_KEY`
 - `SYNTELLA_PORTAL_API_TOKEN` (shared raw token used by the main site to authenticate to this droplet)
 - `TS_AUTHKEY` (Tailscale auth key for non-interactive join)
 - `TS_HOSTNAME` (recommended format: `syntella-<org-slug>`)
 
-Bootstrap configures `openai/gpt-5.2` as the default model.
+Bootstrap seeds a provider-first model catalog for OpenAI, Anthropic, and Moonshot. If no provider key is supplied yet, the catalog still exists and can be connected later from the portal by adding one API key per provider.
 
 Auth is standardized via `/etc/openclaw/openclaw.env` (root-owned, group-readable by `openclaw`) and sourced by shell startup + bootstrap launchers, so child/spawned agents can inherit the same API key consistently.
 
@@ -49,6 +52,8 @@ ssh root@YOUR_DROPLET_IP
 export DISCORD_BOT_TOKEN="YOUR_DISCORD_BOT_TOKEN"
 export DISCORD_TARGET="YOUR_GUILD_ID/YOUR_CHANNEL_ID"
 export DISCORD_HUMAN_ID="YOUR_DISCORD_USER_ID"
+export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY"
 export MOONSHOT_API_KEY="YOUR_MOONSHOT_API_KEY"
 export SYNTELLA_PORTAL_API_TOKEN="YOUR_SHARED_DROPLET_TOKEN"
 export TS_AUTHKEY="tskey-..."
@@ -66,6 +71,8 @@ export OPENCLAW_AUTHORIZED_KEY="$(cat ~/.ssh/id_ed25519.pub)"
 export DISCORD_BOT_TOKEN="YOUR_DISCORD_BOT_TOKEN"
 export DISCORD_TARGET="YOUR_GUILD_ID/YOUR_CHANNEL_ID"
 export DISCORD_HUMAN_ID="YOUR_DISCORD_USER_ID"
+export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY"
 export MOONSHOT_API_KEY="YOUR_MOONSHOT_API_KEY"
 export SYNTELLA_PORTAL_API_TOKEN="YOUR_SHARED_DROPLET_TOKEN"
 export TS_AUTHKEY="tskey-..."
@@ -108,6 +115,8 @@ cd syntella
 export DISCORD_BOT_TOKEN="YOUR_DISCORD_BOT_TOKEN"
 export DISCORD_TARGET="YOUR_GUILD_ID/YOUR_CHANNEL_ID"
 export DISCORD_HUMAN_ID="YOUR_DISCORD_USER_ID"
+export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY"
 export MOONSHOT_API_KEY="YOUR_MOONSHOT_API_KEY"
 export SYNTELLA_PORTAL_API_TOKEN="YOUR_SHARED_DROPLET_TOKEN"
 export TS_AUTHKEY="tskey-..."
@@ -176,6 +185,8 @@ Use one canonical OpenClaw home and one canonical env file:
 
 - `OPENCLAW_HOME=/home/openclaw/.openclaw`
 - `OPENCLAW_PROFILE=main`
+- `OPENAI_API_KEY=...`
+- `ANTHROPIC_API_KEY=...`
 - `MOONSHOT_API_KEY=...`
 - env file path: `/etc/openclaw/openclaw.env`
 

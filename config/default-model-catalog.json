@@ -1,0 +1,151 @@
+{
+  "defaultPrimaryModel": "openai/gpt-5-mini",
+  "providers": {
+    "openai": {
+      "displayName": "OpenAI",
+      "description": "Balanced flagship, mid-tier, and utility GPT-5 models for production reasoning, execution support, and lightweight heartbeats.",
+      "baseUrl": "https://api.openai.com/v1",
+      "api": "openai-completions",
+      "envKey": "OPENAI_API_KEY",
+      "models": [
+        {
+          "id": "gpt-5",
+          "name": "GPT-5",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 400000,
+          "maxTokens": 128000,
+          "cost": {
+            "input": 1.25,
+            "output": 10.0,
+            "cacheRead": 0.125,
+            "cacheWrite": 0.0
+          }
+        },
+        {
+          "id": "gpt-5-mini",
+          "name": "GPT-5 mini",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "cost": {
+            "input": 0.25,
+            "output": 2.0,
+            "cacheRead": 0.025,
+            "cacheWrite": 0.0
+          }
+        },
+        {
+          "id": "gpt-5-nano",
+          "name": "GPT-5 nano",
+          "reasoning": true,
+          "input": ["text"],
+          "cost": {
+            "input": 0.05,
+            "output": 0.4,
+            "cacheRead": 0.005,
+            "cacheWrite": 0.0
+          }
+        }
+      ]
+    },
+    "anthropic": {
+      "displayName": "Anthropic",
+      "description": "Claude tiers covering frontier reasoning, default delivery work, and faster lower-cost utility traffic.",
+      "baseUrl": "https://api.anthropic.com/v1",
+      "api": "anthropic-messages",
+      "envKey": "ANTHROPIC_API_KEY",
+      "models": [
+        {
+          "id": "claude-opus-4-6",
+          "name": "Claude Opus 4.6",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 1000000,
+          "maxTokens": 128000,
+          "cost": {
+            "input": 5.0,
+            "output": 25.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+          }
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "name": "Claude Sonnet 4.6",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 1000000,
+          "maxTokens": 64000,
+          "cost": {
+            "input": 3.0,
+            "output": 15.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+          }
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "name": "Claude Haiku 4.5",
+          "reasoning": false,
+          "input": ["text", "image"],
+          "contextWindow": 200000,
+          "maxTokens": 64000,
+          "cost": {
+            "input": 1.0,
+            "output": 5.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+          }
+        }
+      ]
+    },
+    "moonshot": {
+      "displayName": "Moonshot",
+      "description": "Kimi for flagship agent work plus a lighter Moonshot-v1 utility tier for simple recurring jobs and heartbeat traffic.",
+      "baseUrl": "https://api.moonshot.ai/v1",
+      "api": "openai-completions",
+      "envKey": "MOONSHOT_API_KEY",
+      "models": [
+        {
+          "id": "kimi-k2.5",
+          "name": "Kimi K2.5",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 256000,
+          "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+          }
+        },
+        {
+          "id": "kimi-k2-thinking",
+          "name": "Kimi K2 Thinking",
+          "reasoning": true,
+          "input": ["text"],
+          "contextWindow": 256000,
+          "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+          }
+        },
+        {
+          "id": "moonshot-v1-8k",
+          "name": "Moonshot v1 8K",
+          "reasoning": false,
+          "input": ["text"],
+          "contextWindow": 8000,
+          "cost": {
+            "input": 0.0,
+            "output": 0.0,
+            "cacheRead": 0.0,
+            "cacheWrite": 0.0
+          }
+        }
+      ]
+    }
+  }
+}

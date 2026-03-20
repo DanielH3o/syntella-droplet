@@ -25,6 +25,7 @@ OPENCLAW_STATE_DIR = Path(
     os.environ.get("OPENCLAW_STATE_DIR", os.path.expanduser("~/.openclaw"))
 )
 OPENCLAW_CONFIG = OPENCLAW_STATE_DIR / "openclaw.json"
+DEFAULT_MODEL_CATALOG = Path(__file__).resolve().parent.parent / "config" / "default-model-catalog.json"
 OPENCLAW_CRON_JOBS = OPENCLAW_STATE_DIR / "cron" / "jobs.json"
 OPERATOR_BRIDGE_ENV = Path("/etc/openclaw/operator-bridge.env")
 OPERATOR_BRIDGE_URL = os.environ.get("SYNTELLA_OPERATOR_BRIDGE_URL", "http://127.0.0.1:8787")
@@ -85,6 +86,12 @@ CONTENT_TYPES = {
     ".json": "application/json; charset=utf-8",
     ".png": "image/png",
     ".svg": "image/svg+xml",
+}
+
+PROVIDER_ENV_KEYS = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "moonshot": "MOONSHOT_API_KEY",
 }
 
 
@@ -446,7 +453,7 @@ def discover_openclaw_agents():
     discovered = {}
     agent_sources = {}
     integrations = list_integrations()
-    config = read_openclaw_config()
+    config, _ = ensure_seed_model_catalog(write_back=True)
     runtime_tools = {}
     agents_cfg = config.get("agents")
     entries = agents_cfg.get("list") if isinstance(agents_cfg, dict) else None
@@ -946,9 +953,266 @@ def normalize_modalities(value):
     return []
 
 
+def load_default_model_catalog():
+    try:
+        with DEFAULT_MODEL_CATALOG.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def merge_seed_model_entry(default_model, existing_model):
+    merged = dict(existing_model or {})
+    for key, value in (default_model or {}).items():
+        if key == "cost" and isinstance(value, dict):
+            existing_cost = merged.get("cost")
+            merged_cost = dict(existing_cost) if isinstance(existing_cost, dict) else {}
+            for cost_key, cost_value in value.items():
+                if cost_key not in merged_cost or merged_cost.get(cost_key) in (None, ""):
+                    merged_cost[cost_key] = cost_value
+            merged["cost"] = merged_cost
+            continue
+        if key not in merged or merged.get(key) in (None, "", [], {}):
+            merged[key] = value
+    if "id" in default_model:
+        merged["id"] = default_model["id"]
+    return merged
+
+
+def preferred_seed_primary_model():
+    defaults = load_default_model_catalog()
+    providers = defaults.get("providers") if isinstance(defaults.get("providers"), dict) else {}
+    for provider_name in ("openai", "anthropic", "moonshot"):
+        env_key = PROVIDER_ENV_KEYS.get(provider_name, "")
+        if env_key and os.environ.get(env_key, "").strip():
+            provider_meta = providers.get(provider_name) or {}
+            provider_models = provider_meta.get("models") or []
+            if provider_models:
+                return f"{provider_name}/{provider_models[0].get('id')}"
+    return str(defaults.get("defaultPrimaryModel") or "openai/gpt-5-mini")
+
+
+def ensure_seed_model_catalog(config=None, write_back=False):
+    config = config if isinstance(config, dict) else read_openclaw_config()
+    defaults = load_default_model_catalog()
+    providers_defaults = defaults.get("providers") if isinstance(defaults.get("providers"), dict) else {}
+    changed = False
+
+    models_cfg = config.setdefault("models", {})
+    providers_cfg = models_cfg.setdefault("providers", {})
+    if not isinstance(providers_cfg, dict):
+        providers_cfg = {}
+        models_cfg["providers"] = providers_cfg
+        changed = True
+
+    available_model_keys = set()
+
+    for provider_name, provider_defaults in providers_defaults.items():
+        if not isinstance(provider_defaults, dict):
+            continue
+
+        provider_cfg = providers_cfg.get(provider_name)
+        if not isinstance(provider_cfg, dict):
+            provider_cfg = {}
+            providers_cfg[provider_name] = provider_cfg
+            changed = True
+
+        for config_key, default_key in (
+            ("displayName", "displayName"),
+            ("description", "description"),
+            ("baseUrl", "baseUrl"),
+            ("api", "api"),
+        ):
+            value = provider_defaults.get(default_key)
+            if value and not provider_cfg.get(config_key):
+                provider_cfg[config_key] = value
+                changed = True
+
+        env_key = str(provider_defaults.get("envKey") or "").strip()
+        env_value = os.environ.get(env_key, "").strip() if env_key else ""
+        if env_value and provider_cfg.get("apiKey") != env_value:
+            provider_cfg["apiKey"] = env_value
+            changed = True
+
+        provider_models = provider_cfg.get("models")
+        if not isinstance(provider_models, list):
+            provider_models = []
+            provider_cfg["models"] = provider_models
+            changed = True
+
+        existing_by_id = {}
+        for model in provider_models:
+            if not isinstance(model, dict):
+                continue
+            model_id = (model.get("id") or "").strip()
+            if model_id:
+                existing_by_id[model_id] = model
+
+        merged_models = []
+        seeded_ids = set()
+        for default_model in provider_defaults.get("models") or []:
+            if not isinstance(default_model, dict):
+                continue
+            model_id = (default_model.get("id") or "").strip()
+            if not model_id:
+                continue
+            merged_model = merge_seed_model_entry(default_model, existing_by_id.get(model_id))
+            merged_models.append(merged_model)
+            seeded_ids.add(model_id)
+            available_model_keys.add(f"{provider_name}/{model_id}")
+            if existing_by_id.get(model_id) != merged_model:
+                changed = True
+
+        for existing_model in provider_models:
+            if not isinstance(existing_model, dict):
+                continue
+            model_id = (existing_model.get("id") or "").strip()
+            if not model_id or model_id in seeded_ids:
+                continue
+            merged_models.append(existing_model)
+            available_model_keys.add(f"{provider_name}/{model_id}")
+
+        if provider_cfg.get("models") != merged_models:
+            provider_cfg["models"] = merged_models
+            changed = True
+
+    agents_cfg = config.setdefault("agents", {})
+    defaults_cfg = agents_cfg.setdefault("defaults", {})
+    model_cfg = defaults_cfg.get("model")
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+        defaults_cfg["model"] = model_cfg
+        changed = True
+
+    current_primary = str(model_cfg.get("primary") or "").strip()
+    if not current_primary or current_primary not in available_model_keys:
+        next_primary = preferred_seed_primary_model()
+        if model_cfg.get("primary") != next_primary:
+            model_cfg["primary"] = next_primary
+            changed = True
+
+    if changed and write_back:
+        write_openclaw_config(config)
+
+    return config, changed
+
+
+def get_default_primary_model():
+    config, _ = ensure_seed_model_catalog(write_back=True)
+    agents_cfg = config.get("agents") if isinstance(config.get("agents"), dict) else {}
+    defaults_cfg = agents_cfg.get("defaults") if isinstance(agents_cfg.get("defaults"), dict) else {}
+    model_cfg = defaults_cfg.get("model") if isinstance(defaults_cfg.get("model"), dict) else {}
+    return str(model_cfg.get("primary") or "").strip()
+
+
+def list_model_providers():
+    config, _ = ensure_seed_model_catalog(write_back=True)
+    models = list_models()
+    models_by_provider = {}
+    for model in models:
+        provider_name = str(model.get("provider") or "").strip()
+        if not provider_name:
+            continue
+        models_by_provider.setdefault(provider_name, []).append(model)
+
+    defaults = load_default_model_catalog()
+    provider_defaults = defaults.get("providers") if isinstance(defaults.get("providers"), dict) else {}
+    config_providers = config.get("models", {}).get("providers", {})
+    current_primary = get_default_primary_model()
+    providers = []
+
+    for provider_name in sorted(set(provider_defaults) | set(config_providers or {})):
+        provider_cfg = config_providers.get(provider_name) if isinstance(config_providers, dict) else {}
+        if not isinstance(provider_cfg, dict):
+            provider_cfg = {}
+        default_meta = provider_defaults.get(provider_name) if isinstance(provider_defaults.get(provider_name), dict) else {}
+        provider_models = models_by_provider.get(provider_name, [])
+        default_model = ""
+        if current_primary.startswith(f"{provider_name}/"):
+            default_model = current_primary
+        elif provider_models:
+            default_model = f"{provider_name}/{provider_models[0].get('model_id')}"
+        providers.append({
+            "provider": provider_name,
+            "display_name": provider_cfg.get("displayName") or default_meta.get("displayName") or provider_name.title(),
+            "description": provider_cfg.get("description") or default_meta.get("description") or "",
+            "provider_base_url": provider_cfg.get("baseUrl") or default_meta.get("baseUrl") or "",
+            "provider_api_adapter": provider_cfg.get("api") or default_meta.get("api") or "",
+            "provider_has_api_key": bool(provider_cfg.get("apiKey")),
+            "env_key": default_meta.get("envKey") or PROVIDER_ENV_KEYS.get(provider_name) or "",
+            "model_count": len(provider_models),
+            "enabled_model_count": len([model for model in provider_models if model.get("enabled")]),
+            "reasoning_model_count": len([model for model in provider_models if model.get("reasoning")]),
+            "pricing_complete_count": len([model for model in provider_models if model.get("pricing_complete")]),
+            "default_model": default_model,
+            "models": [
+                {
+                    "provider": model.get("provider"),
+                    "model_id": model.get("model_id"),
+                    "display_name": model.get("display_name") or model.get("model_id"),
+                    "enabled": bool(model.get("enabled")),
+                    "reasoning": bool(model.get("reasoning")),
+                }
+                for model in provider_models
+            ],
+        })
+    return providers
+
+
+def upsert_model_provider(body):
+    provider = (body.get("provider") or "").strip()
+    if not provider:
+        raise ValueError("provider is required")
+
+    config, _ = ensure_seed_model_catalog(write_back=True)
+    models_cfg = config.setdefault("models", {})
+    providers_cfg = models_cfg.setdefault("providers", {})
+    provider_cfg = providers_cfg.get(provider)
+    if not isinstance(provider_cfg, dict):
+        provider_cfg = {}
+        providers_cfg[provider] = provider_cfg
+
+    base_url = (body.get("provider_base_url") or "").strip()
+    api_adapter = (body.get("provider_api_adapter") or "").strip()
+    api_key = body.get("provider_api_key")
+    default_primary_model = (body.get("default_primary_model") or "").strip()
+
+    if base_url:
+        provider_cfg["baseUrl"] = base_url
+    if api_adapter:
+        provider_cfg["api"] = api_adapter
+    if isinstance(api_key, str) and api_key.strip():
+        provider_cfg["apiKey"] = api_key.strip()
+
+    if default_primary_model:
+        if "/" not in default_primary_model:
+            raise ValueError("default_primary_model must be in provider/model format")
+        default_provider, _ = default_primary_model.split("/", 1)
+        if default_provider != provider:
+            raise ValueError("default_primary_model must belong to the selected provider")
+        agents_cfg = config.setdefault("agents", {})
+        defaults_cfg = agents_cfg.setdefault("defaults", {})
+        model_cfg = defaults_cfg.get("model")
+        if not isinstance(model_cfg, dict):
+            model_cfg = {}
+            defaults_cfg["model"] = model_cfg
+        model_cfg["primary"] = default_primary_model
+
+    write_openclaw_config(config)
+    return {
+        "provider": provider,
+        "provider_base_url": provider_cfg.get("baseUrl") or "",
+        "provider_api_adapter": provider_cfg.get("api") or "",
+        "provider_has_api_key": bool(provider_cfg.get("apiKey")),
+        "default_primary_model": get_default_primary_model(),
+    }
+
+
 def load_openclaw_model_catalog():
+    config, _ = ensure_seed_model_catalog(write_back=True)
     catalog = {}
-    payload = read_openclaw_config()
+    payload = config
     models = payload.get("models") if isinstance(payload, dict) else None
     providers = models.get("providers") if isinstance(models, dict) else None
     if not isinstance(providers, dict):
@@ -971,6 +1235,8 @@ def load_openclaw_model_catalog():
                 "model_id": model_id,
                 "display_name": model.get("name") or model_id,
                 "enabled": True,
+                "provider_display_name": provider_meta.get("displayName") or provider_name,
+                "provider_description": provider_meta.get("description") or "",
                 "provider_base_url": provider_meta.get("baseUrl") or "",
                 "provider_api_adapter": provider_meta.get("api") or "",
                 "provider_has_api_key": bool(provider_meta.get("apiKey")),
@@ -1164,6 +1430,8 @@ def list_models():
             "model_id": model_id,
             "display_name": model_id,
             "enabled": True,
+            "provider_display_name": provider,
+            "provider_description": "",
             "provider_base_url": "",
             "provider_api_adapter": "",
             "provider_has_api_key": False,
@@ -1198,6 +1466,8 @@ def list_models():
             "model_id": model_id,
             "display_name": override.get("display_name") or base.get("display_name") or model_id,
             "enabled": base.get("enabled", True) if override.get("enabled") is None else bool(override.get("enabled")),
+            "provider_display_name": base.get("provider_display_name") or provider,
+            "provider_description": base.get("provider_description") or "",
             "provider_base_url": base.get("provider_base_url") or "",
             "provider_api_adapter": base.get("provider_api_adapter") or "",
             "provider_has_api_key": bool(base.get("provider_has_api_key")),
@@ -2500,7 +2770,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/models":
             sync = sync_usage_events()
-            return self._send_json(200, {"ok": True, "sync": sync, "models": list_models()})
+            return self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "sync": sync,
+                    "default_primary_model": get_default_primary_model(),
+                    "providers": list_model_providers(),
+                    "models": list_models(),
+                },
+            )
 
         if path == "/api/integrations":
             return self._send_json(200, {"ok": True, "integrations": list_integrations()})
@@ -2589,7 +2868,37 @@ class Handler(BaseHTTPRequestHandler):
                 apply_model_to_openclaw_config(body)
                 upsert_model_override(body)
                 runtime = restart_openclaw_gateway("model override update")
-                return self._send_json(200, {"ok": True, "models": list_models(), "runtime": runtime})
+                return self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "default_primary_model": get_default_primary_model(),
+                        "providers": list_model_providers(),
+                        "models": list_models(),
+                        "runtime": runtime,
+                    },
+                )
+            except ValueError as exc:
+                return self._send_json(400, {"ok": False, "error": str(exc)})
+            except Exception as exc:
+                return self._send_json(500, {"ok": False, "error": str(exc)})
+
+        if path == "/api/models/providers":
+            body = self._parse_body()
+            try:
+                provider = upsert_model_provider(body)
+                runtime = restart_openclaw_gateway("model provider update")
+                return self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "provider": provider,
+                        "default_primary_model": get_default_primary_model(),
+                        "providers": list_model_providers(),
+                        "models": list_models(),
+                        "runtime": runtime,
+                    },
+                )
             except ValueError as exc:
                 return self._send_json(400, {"ok": False, "error": str(exc)})
             except Exception as exc:
@@ -2751,7 +3060,16 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 delete_model_override(provider, model_id)
                 runtime = restart_openclaw_gateway("model override delete")
-                return self._send_json(200, {"ok": True, "models": list_models(), "runtime": runtime})
+                return self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "default_primary_model": get_default_primary_model(),
+                        "providers": list_model_providers(),
+                        "models": list_models(),
+                        "runtime": runtime,
+                    },
+                )
             except Exception as exc:
                 return self._send_json(500, {"ok": False, "error": str(exc)})
 
