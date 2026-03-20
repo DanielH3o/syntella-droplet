@@ -214,12 +214,12 @@ tailscale_is_connected() {
   status_json="$(tailscale_status_json)"
   [[ -n "$status_json" ]] || return 1
 
-  python3 - <<'PY' <<<"$status_json"
+  STATUS_JSON="$status_json" python3 - <<'PY'
 import json
-import sys
+import os
 
 try:
-    payload = json.load(sys.stdin)
+    payload = json.loads(os.environ["STATUS_JSON"])
 except Exception:
     raise SystemExit(1)
 
@@ -242,11 +242,11 @@ persist_tailscale_metadata() {
   local env_file="$env_dir/tailscale.env"
   local parsed
   parsed="$(
-    python3 - <<'PY' <<<"$status_json"
+    STATUS_JSON="$status_json" python3 - <<'PY'
 import json
-import sys
+import os
 
-payload = json.load(sys.stdin)
+payload = json.loads(os.environ["STATUS_JSON"])
 self_node = payload.get("Self") or {}
 dns_name = str(self_node.get("DNSName") or "").rstrip(".")
 host_name = str(self_node.get("HostName") or "")
