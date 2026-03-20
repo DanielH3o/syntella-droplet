@@ -1008,14 +1008,55 @@ PY
 }
 
 verify_discord_dm_allowlist() {
-  local dm_enabled dm_policy dm_human
-  dm_enabled="$(oc config get channels.discord.dm.enabled 2>/dev/null | tr -d '"[:space:]' || true)"
-  dm_policy="$(oc config get channels.discord.dmPolicy 2>/dev/null | tr -d '"[:space:]' || true)"
-  dm_human="$(oc config get channels.discord.allowFrom.0 2>/dev/null | tr -d '"[:space:]' || true)"
+  local config_file="$HOME/.openclaw/openclaw.json"
+  local verification
+  verification="$(
+    python3 - "$config_file" "$DISCORD_HUMAN_ID" <<'PY'
+import json
+import os
+import sys
 
-  [[ "$dm_enabled" == "true" ]] || { echo "Error: channels.discord.dm.enabled is not true"; exit 1; }
-  [[ "$dm_policy" == "allowlist" ]] || { echo "Error: channels.discord.dmPolicy is not allowlist"; exit 1; }
-  [[ "$dm_human" == "$DISCORD_HUMAN_ID" ]] || { echo "Error: channels.discord.allowFrom[0] mismatch"; exit 1; }
+config_path, expected_human_id = sys.argv[1:3]
+
+try:
+    with open(config_path, "r", encoding="utf-8") as handle:
+        cfg = json.load(handle)
+except Exception as exc:
+    print(f"config_read_error:{exc}")
+    sys.exit(1)
+
+channels = cfg.get("channels")
+if not isinstance(channels, dict):
+    print("channels_missing")
+    sys.exit(1)
+
+discord = channels.get("discord")
+if not isinstance(discord, dict):
+    print("discord_missing")
+    sys.exit(1)
+
+dm_cfg = discord.get("dm")
+if not isinstance(dm_cfg, dict) or dm_cfg.get("enabled") is not True:
+    print("dm_enabled_false")
+    sys.exit(1)
+
+if str(discord.get("dmPolicy") or "").strip() != "allowlist":
+    print("dm_policy_invalid")
+    sys.exit(1)
+
+allow_from = discord.get("allowFrom")
+if not isinstance(allow_from, list) or expected_human_id not in {str(item) for item in allow_from}:
+    print("allow_from_mismatch")
+    sys.exit(1)
+
+print("ok")
+PY
+  )" || true
+
+  [[ "$verification" == "ok" ]] || {
+    echo "Error: Discord DM allowlist verification failed (${verification:-unknown_error})"
+    exit 1
+  }
 
   echo "Verified Discord DM allowlist (owner=${DISCORD_HUMAN_ID})."
 }
