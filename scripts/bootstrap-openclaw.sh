@@ -36,6 +36,10 @@ FRONTEND_URL=""
 FRONTEND_ALLOWED_IP="${FRONTEND_ALLOWED_IP:-}"
 SYNTELLA_PORTAL_API_TOKEN="${SYNTELLA_PORTAL_API_TOKEN:-}"
 SYNTELLA_ENABLE_DROPLET_FRONTEND="${SYNTELLA_ENABLE_DROPLET_FRONTEND:-0}"
+TS_AUTHKEY="${TS_AUTHKEY:-}"
+TS_HOSTNAME="${TS_HOSTNAME:-}"
+TS_ACCEPT_DNS="${TS_ACCEPT_DNS:-true}"
+TS_LOGIN_SERVER="${TS_LOGIN_SERVER:-}"
 PUBLIC_IP_CACHE="${PUBLIC_IP_CACHE:-}"
 # Exec approval posture for runtime command execution:
 # - full: no interactive exec approvals (default for this droplet kit)
@@ -46,8 +50,11 @@ SYNTELLA_EXEC_MAX_OUTPUT_BYTES="${SYNTELLA_EXEC_MAX_OUTPUT_BYTES:-16384}"
 OPERATOR_BRIDGE_PORT="${OPERATOR_BRIDGE_PORT:-8787}"
 OPERATOR_BRIDGE_TOKEN=""
 SYNTELLA_API_PORT="${SYNTELLA_API_PORT:-8788}"
-SYNTELLA_API_BIND_HOST="${SYNTELLA_API_BIND_HOST:-127.0.0.1}"
+SYNTELLA_API_BIND_HOST="${SYNTELLA_API_BIND_HOST:-0.0.0.0}"
 SYNTELLA_PRESERVE_CUSTOMER_STATE="${SYNTELLA_PRESERVE_CUSTOMER_STATE:-1}"
+TAILSCALE_HOSTNAME_EFFECTIVE=""
+TAILSCALE_DNS_NAME_EFFECTIVE=""
+TAILSCALE_IPV4_EFFECTIVE=""
 
 # OPENCLAW_HOME should point to the user home base (e.g. /home/openclaw), not ~/.openclaw.
 # If inherited incorrectly from the environment, normalize it before any `openclaw config` calls.
@@ -187,6 +194,165 @@ assert_templates_exist() {
   for f in "${required[@]}"; do
     [[ -f "$f" ]] || { echo "Missing template file: $f"; exit 1; }
   done
+}
+
+install_tailscale() {
+  say "Ensuring Tailscale is installed"
+  if ! command -v tailscale >/dev/null 2>&1; then
+    curl -fsSL https://tailscale.com/install.sh | sudo sh
+  fi
+
+  sudo systemctl enable --now tailscaled >/dev/null 2>&1 || true
+}
+
+tailscale_status_json() {
+  sudo tailscale status --json 2>/dev/null || true
+}
+
+tailscale_is_connected() {
+  local status_json
+  status_json="$(tailscale_status_json)"
+  [[ -n "$status_json" ]] || return 1
+
+  python3 - <<'PY' <<<"$status_json"
+import json
+import sys
+
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+
+state = str(payload.get("BackendState") or "")
+self_node = payload.get("Self") or {}
+online = self_node.get("Online")
+raise SystemExit(0 if state == "Running" and online is not False else 1)
+PY
+}
+
+persist_tailscale_metadata() {
+  local status_json
+  status_json="$(tailscale_status_json)"
+  if [[ -z "$status_json" ]]; then
+    echo "Could not read Tailscale status output."
+    exit 1
+  fi
+
+  local env_dir="/etc/openclaw"
+  local env_file="$env_dir/tailscale.env"
+  local parsed
+  parsed="$(
+    python3 - <<'PY' <<<"$status_json"
+import json
+import sys
+
+payload = json.load(sys.stdin)
+self_node = payload.get("Self") or {}
+dns_name = str(self_node.get("DNSName") or "").rstrip(".")
+host_name = str(self_node.get("HostName") or "")
+ips = self_node.get("TailscaleIPs") or []
+ipv4 = next((item for item in ips if "." in str(item)), "")
+print(f"TAILSCALE_HOSTNAME_EFFECTIVE={host_name}")
+print(f"TAILSCALE_DNS_NAME_EFFECTIVE={dns_name}")
+print(f"TAILSCALE_IPV4_EFFECTIVE={ipv4}")
+PY
+  )"
+
+  TAILSCALE_HOSTNAME_EFFECTIVE="$(printf '%s\n' "$parsed" | sed -n 's/^TAILSCALE_HOSTNAME_EFFECTIVE=//p')"
+  TAILSCALE_DNS_NAME_EFFECTIVE="$(printf '%s\n' "$parsed" | sed -n 's/^TAILSCALE_DNS_NAME_EFFECTIVE=//p')"
+  TAILSCALE_IPV4_EFFECTIVE="$(printf '%s\n' "$parsed" | sed -n 's/^TAILSCALE_IPV4_EFFECTIVE=//p')"
+
+  sudo install -d -m 750 -o root -g openclaw "$env_dir"
+  sudo tee "$env_file" >/dev/null <<EOF
+TAILSCALE_HOSTNAME_EFFECTIVE="${TAILSCALE_HOSTNAME_EFFECTIVE}"
+TAILSCALE_DNS_NAME_EFFECTIVE="${TAILSCALE_DNS_NAME_EFFECTIVE}"
+TAILSCALE_IPV4_EFFECTIVE="${TAILSCALE_IPV4_EFFECTIVE}"
+EOF
+  sudo chown root:openclaw "$env_file"
+  sudo chmod 640 "$env_file"
+}
+
+join_tailscale_tailnet() {
+  install_tailscale
+
+  if tailscale_is_connected; then
+    say "Tailscale already connected; recording current tailnet metadata"
+    persist_tailscale_metadata
+    return 0
+  fi
+
+  if [[ -z "$TS_AUTHKEY" || -z "$TS_HOSTNAME" ]]; then
+    echo "TS_AUTHKEY and TS_HOSTNAME are required to join the tailnet."
+    exit 1
+  fi
+
+  say "Joining Tailscale tailnet"
+  local tailscale_args=(
+    up
+    "--authkey=${TS_AUTHKEY}"
+    "--hostname=${TS_HOSTNAME}"
+    "--accept-dns=${TS_ACCEPT_DNS}"
+    "--reset"
+  )
+  if [[ -n "$TS_LOGIN_SERVER" ]]; then
+    tailscale_args+=("--login-server=${TS_LOGIN_SERVER}")
+  fi
+
+  sudo tailscale "${tailscale_args[@]}"
+  persist_tailscale_metadata
+}
+
+install_syntella_api_firewall() {
+  local firewall_script="/usr/local/bin/syntella-api-firewall"
+  local service_file="/etc/systemd/system/syntella-api-firewall.service"
+
+  sudo apt-get install -y iptables >/dev/null 2>&1 || true
+
+  sudo tee "$firewall_script" >/dev/null <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+ENV_FILE="/etc/openclaw/syntella-api.env"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ENV_FILE"
+  set +a
+fi
+
+PORT="${SYNTELLA_DEV_PORT:-8788}"
+CHAIN="SYNTELLA_API_GUARD"
+
+iptables -N "$CHAIN" 2>/dev/null || true
+iptables -F "$CHAIN"
+iptables -A "$CHAIN" -i lo -j RETURN
+iptables -A "$CHAIN" -i tailscale0 -j RETURN
+iptables -A "$CHAIN" -j DROP
+
+iptables -C INPUT -p tcp --dport "$PORT" -j "$CHAIN" 2>/dev/null \
+  || iptables -I INPUT -p tcp --dport "$PORT" -j "$CHAIN"
+EOF
+
+  sudo chmod 755 "$firewall_script"
+
+  sudo tee "$service_file" >/dev/null <<EOF
+[Unit]
+Description=Syntella API firewall guard
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=${firewall_script}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  sudo chmod 644 "$service_file"
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now syntella-api-firewall >/dev/null 2>&1 || true
 }
 
 install_syntella_api() {
@@ -446,6 +612,28 @@ require_discord_inputs() {
   fi
 
   parse_discord_target "$DISCORD_TARGET"
+}
+
+require_portal_and_tailnet_inputs() {
+  if [[ -z "$SYNTELLA_PORTAL_API_TOKEN" ]]; then
+    echo "Missing SYNTELLA_PORTAL_API_TOKEN."
+    echo "Export SYNTELLA_PORTAL_API_TOKEN before running this script."
+    exit 1
+  fi
+
+  if ! tailscale_is_connected; then
+    if [[ -z "$TS_AUTHKEY" ]]; then
+      echo "Missing TS_AUTHKEY."
+      echo "Export TS_AUTHKEY before running this script so the droplet can join the tailnet."
+      exit 1
+    fi
+
+    if [[ -z "$TS_HOSTNAME" ]]; then
+      echo "Missing TS_HOSTNAME."
+      echo "Example: TS_HOSTNAME=\"syntella-example-client\""
+      exit 1
+    fi
+  fi
 }
 
 configure_discord_channel() {
@@ -982,9 +1170,11 @@ configure_openclaw_runtime() {
   say "Configuring model provider (shared env file + defaults)"
   setup_openclaw_env_file
   setup_openclaw_global_dotenv
+  join_tailscale_tailnet
   install_syntella_exec_wrapper
   install_operator_bridge
   install_syntella_api
+  install_syntella_api_firewall
 
   apply_openclaw_baseline_config
 
@@ -1322,6 +1512,13 @@ print_summary() {
   echo "----------------------------------------"
   echo "Bootstrap complete."
   echo
+  echo "Tailnet access configured."
+  echo "- Tailscale hostname: ${TAILSCALE_HOSTNAME_EFFECTIVE:-unknown}"
+  echo "- MagicDNS name:      ${TAILSCALE_DNS_NAME_EFFECTIVE:-unknown}"
+  echo "- Tailscale IPv4:     ${TAILSCALE_IPV4_EFFECTIVE:-unknown}"
+  echo "- API base URL:       http://${TAILSCALE_HOSTNAME_EFFECTIVE:-unknown}:${SYNTELLA_API_PORT}"
+  echo "- API exposure:       ${SYNTELLA_API_BIND_HOST} (firewalled to loopback + tailscale0)"
+  echo
   echo "Discord mode configured."
   echo "- Guild ID:   ${DISCORD_GUILD_ID}"
   echo "- Channel ID: ${DISCORD_CHANNEL_ID}"
@@ -1332,16 +1529,20 @@ print_summary() {
     echo "- Frontend: ${FRONTEND_URL}"
     echo "- Admin page: ${FRONTEND_URL}/admin"
     echo "- Frontend allowlist: ${FRONTEND_ALLOWED_IP}"
+  else
+    echo "- Frontend: disabled"
   fi
   echo
   echo "Gateway is loopback-only (no public OpenClaw dashboard access configured)."
   echo "Use Discord as your primary interface."
+  echo "Use the main Syntella site over the tailnet for portal access."
   echo "----------------------------------------"
 }
 
 main() {
   assert_templates_exist
   require_discord_inputs
+  require_portal_and_tailnet_inputs
   configure_openclaw_runtime
 
   say "Starting/restarting gateway service"

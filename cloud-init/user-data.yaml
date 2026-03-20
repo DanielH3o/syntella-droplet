@@ -13,6 +13,14 @@ users:
       - "REPLACE_WITH_YOUR_SSH_PUBLIC_KEY"
 
 write_files:
+  - path: /home/openclaw/.bootstrap.env
+    permissions: '0600'
+    owner: openclaw:openclaw
+    content: |
+      TS_AUTHKEY=REPLACE_WITH_TS_AUTHKEY
+      TS_HOSTNAME=REPLACE_WITH_TS_HOSTNAME
+      SYNTELLA_PORTAL_API_TOKEN=REPLACE_WITH_SHARED_DROPLET_TOKEN
+      FRONTEND_ENABLED=0
   - path: /home/openclaw/bootstrap.sh
     permissions: '0755'
     owner: openclaw:openclaw
@@ -20,6 +28,9 @@ write_files:
       #!/usr/bin/env bash
       set -euo pipefail
       cd /home/openclaw
+      set -a
+      source /home/openclaw/.bootstrap.env
+      set +a
       apt-get update -y
       apt-get install -y curl git ca-certificates
 
@@ -27,12 +38,14 @@ write_files:
       if ! command -v tailscale >/dev/null 2>&1; then
         curl -fsSL https://tailscale.com/install.sh | sh
       fi
+      systemctl enable --now tailscaled
 
       # OpenClaw
       if ! command -v openclaw >/dev/null 2>&1; then
         sudo -u openclaw -H bash -lc 'curl -fsSL https://openclaw.ai/install.sh | bash'
       fi
 
+      tailscale up --authkey "${TS_AUTHKEY}" --hostname "${TS_HOSTNAME}" --accept-dns=true --reset
       sudo -u openclaw -H bash -lc 'openclaw config set gateway.bind loopback'
       sudo -u openclaw -H bash -lc 'openclaw config set gateway.auth.mode token'
       sudo -u openclaw -H bash -lc 'openclaw config set gateway.tailscale.mode serve'

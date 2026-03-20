@@ -7,6 +7,7 @@ Opinionated bootstrap for running OpenClaw on a DigitalOcean Ubuntu droplet with
 - Installs OpenClaw non-interactively
 - Keeps gateway private (`gateway.bind=loopback`, token auth)
 - Configures Discord bot token
+- Joins a Tailscale tailnet during bootstrap for private control-plane access
 - Restricts Discord ingress to a single guild/channel allowlist
 - Enables Discord DMs only for the configured human allowlist
 - Installs `/usr/local/bin/syntella-exec` for owner-DM `/exec` shell command execution (timeout + output cap + audit log)
@@ -15,7 +16,9 @@ Opinionated bootstrap for running OpenClaw on a DigitalOcean Ubuntu droplet with
 - Spawn path now uses per-agent OpenClaw homes (`~/.openclaw-<agent_id>`) to prevent main-token/config collisions
 - Child guild/channel allowlist is written as one JSON object (avoids numeric dotted-key issues), then validated before success
 - Spawn flow still aborts if the main bot token changes during spawn (safety guard)
-- Sets up a public workspace frontend on nginx (`http://<droplet-ip>`) and validates local+public responses with a marker check
+- Exposes the Syntella API for main-site portal access over Tailscale on port `8788`
+- Keeps the Syntella API firewalled to `tailscale0` and loopback
+- Optionally sets up a public workspace frontend on nginx when `FRONTEND_ENABLED=1`
 - Sends a startup ping message to the configured Discord channel after bootstrap (includes frontend URL, hostname, and detected droplet IP)
 - Installs a global `/usr/local/bin/openclaw` shim (so root/sudo users can run `openclaw ...` without switching users)
 
@@ -27,7 +30,10 @@ Opinionated bootstrap for running OpenClaw on a DigitalOcean Ubuntu droplet with
   - `<guildId>:<channelId>`
   - `guild:<guildId>/channel:<channelId>`
 - `DISCORD_HUMAN_ID` (owner user id for DM allowlist / privileged commands)
-- `OPENAI_API_KEY`
+- `MOONSHOT_API_KEY`
+- `SYNTELLA_PORTAL_API_TOKEN` (shared raw token used by the main site to authenticate to this droplet)
+- `TS_AUTHKEY` (Tailscale auth key for non-interactive join)
+- `TS_HOSTNAME` (recommended format: `syntella-<org-slug>`)
 
 Bootstrap configures `openai/gpt-5.2` as the default model.
 
@@ -43,9 +49,11 @@ ssh root@YOUR_DROPLET_IP
 export DISCORD_BOT_TOKEN="YOUR_DISCORD_BOT_TOKEN"
 export DISCORD_TARGET="YOUR_GUILD_ID/YOUR_CHANNEL_ID"
 export DISCORD_HUMAN_ID="YOUR_DISCORD_USER_ID"
-export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
-# Optional: disable placeholder frontend
-# export FRONTEND_ENABLED=0
+export MOONSHOT_API_KEY="YOUR_MOONSHOT_API_KEY"
+export SYNTELLA_PORTAL_API_TOKEN="YOUR_SHARED_DROPLET_TOKEN"
+export TS_AUTHKEY="tskey-..."
+export TS_HOSTNAME="syntella-example-client"
+export FRONTEND_ENABLED=0
 
 # 3) Run bootstrap
 curl -fsSL https://raw.githubusercontent.com/DanielH3o/syntella/main/scripts/bootstrap-root.sh | bash
@@ -58,7 +66,11 @@ export OPENCLAW_AUTHORIZED_KEY="$(cat ~/.ssh/id_ed25519.pub)"
 export DISCORD_BOT_TOKEN="YOUR_DISCORD_BOT_TOKEN"
 export DISCORD_TARGET="YOUR_GUILD_ID/YOUR_CHANNEL_ID"
 export DISCORD_HUMAN_ID="YOUR_DISCORD_USER_ID"
-export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+export MOONSHOT_API_KEY="YOUR_MOONSHOT_API_KEY"
+export SYNTELLA_PORTAL_API_TOKEN="YOUR_SHARED_DROPLET_TOKEN"
+export TS_AUTHKEY="tskey-..."
+export TS_HOSTNAME="syntella-example-client"
+export FRONTEND_ENABLED=0
 curl -fsSL https://raw.githubusercontent.com/DanielH3o/syntella/main/scripts/bootstrap-root.sh | bash
 ```
 
@@ -96,8 +108,18 @@ cd syntella
 export DISCORD_BOT_TOKEN="YOUR_DISCORD_BOT_TOKEN"
 export DISCORD_TARGET="YOUR_GUILD_ID/YOUR_CHANNEL_ID"
 export DISCORD_HUMAN_ID="YOUR_DISCORD_USER_ID"
-export OPENAI_API_KEY="YOUR_OPENAI_API_KEY"
+export MOONSHOT_API_KEY="YOUR_MOONSHOT_API_KEY"
+export SYNTELLA_PORTAL_API_TOKEN="YOUR_SHARED_DROPLET_TOKEN"
+export TS_AUTHKEY="tskey-..."
+export TS_HOSTNAME="syntella-example-client"
+export FRONTEND_ENABLED=0
 bash scripts/bootstrap-openclaw.sh
+```
+
+After bootstrap, record the printed MagicDNS hostname and use it in the site repo as:
+
+```text
+http://syntella-example-client:8788
 ```
 
 ## Local development
@@ -125,6 +147,7 @@ Optional env vars:
 
 - `SYNTELLA_WORKSPACE=/path/to/workspace`
 - `SYNTELLA_DEV_PORT=3001`
+- `SYNTELLA_PORTAL_API_TOKEN=...` when testing authenticated `/api/*`
 
 If your local OpenClaw processes are already writing to `~/.openclaw/workspace`, the dashboard will use that real data. If `registry.json` does not exist yet, the UI still runs but Departments will be empty until agents register.
 
@@ -138,13 +161,22 @@ sudo -u openclaw -H bash /home/openclaw/syntella/scripts/smoke-test.sh
 
 This checks gateway listener, Discord config, project files, and local/public frontend responses.
 
+For tailnet API checks:
+
+```bash
+curl http://127.0.0.1:8788/health
+curl -H "Authorization: Bearer ${SYNTELLA_PORTAL_API_TOKEN}" http://127.0.0.1:8788/api/health
+sudo tailscale status
+sudo cat /etc/openclaw/tailscale.env
+```
+
 ## Shared API key strategy (recommended)
 
 Use one canonical OpenClaw home and one canonical env file:
 
 - `OPENCLAW_HOME=/home/openclaw/.openclaw`
 - `OPENCLAW_PROFILE=main`
-- `OPENAI_API_KEY=...`
+- `MOONSHOT_API_KEY=...`
 - env file path: `/etc/openclaw/openclaw.env`
 
 When starting extra profiles/processes, source the env file first:
