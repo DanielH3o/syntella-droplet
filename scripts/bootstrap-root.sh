@@ -22,8 +22,8 @@ set -euo pipefail
 #   curl -fsSL https://raw.githubusercontent.com/DanielH3o/syntella/main/scripts/bootstrap-root.sh | bash
 
 OPENCLAW_USER="${OPENCLAW_USER:-openclaw}"
-REPO_URL="${REPO_URL:-https://github.com/DanielH3o/syntella.git}"
-REPO_DIR="${REPO_DIR:-/home/${OPENCLAW_USER}/syntella}"
+REPO_URL="${REPO_URL:-https://github.com/DanielH3o/syntella-droplet.git}"
+REPO_DIR="${REPO_DIR:-/home/${OPENCLAW_USER}/syntella-droplet}"
 
 if [[ "$EUID" -ne 0 ]]; then
   echo "Please run as root."
