@@ -1,0 +1,46 @@
+#cloud-config
+
+package_update: true
+package_upgrade: true
+
+users:
+  - name: openclaw
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - "REPLACE_WITH_YOUR_SSH_PUBLIC_KEY"
+
+write_files:
+  - path: /home/openclaw/bootstrap.sh
+    permissions: '0755'
+    owner: openclaw:openclaw
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      cd /home/openclaw
+      apt-get update -y
+      apt-get install -y curl git ca-certificates
+
+      # Tailscale
+      if ! command -v tailscale >/dev/null 2>&1; then
+        curl -fsSL https://tailscale.com/install.sh | sh
+      fi
+
+      # OpenClaw
+      if ! command -v openclaw >/dev/null 2>&1; then
+        sudo -u openclaw -H bash -lc 'curl -fsSL https://openclaw.ai/install.sh | bash'
+      fi
+
+      sudo -u openclaw -H bash -lc 'openclaw config set gateway.bind loopback'
+      sudo -u openclaw -H bash -lc 'openclaw config set gateway.auth.mode token'
+      sudo -u openclaw -H bash -lc 'openclaw config set gateway.tailscale.mode serve'
+      sudo -u openclaw -H bash -lc "openclaw config set gateway.trustedProxies '[\"127.0.0.1\"]'"
+      sudo -u openclaw -H bash -lc 'openclaw doctor --generate-gateway-token || true'
+      sudo -u openclaw -H bash -lc 'openclaw gateway restart || openclaw gateway start'
+
+runcmd:
+  - [ bash, -lc, "/home/openclaw/bootstrap.sh > /var/log/openclaw-bootstrap.log 2>&1" ]
+
+final_message: "openclaw-droplet-kit cloud-init completed. Check /var/log/openclaw-bootstrap.log"

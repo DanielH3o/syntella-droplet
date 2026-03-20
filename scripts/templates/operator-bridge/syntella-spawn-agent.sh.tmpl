@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AGENT_ID="${1:-}"
+ROLE="${2:-}"
+DISCORD_BOT_TOKEN_AGENT="${3:-}"
+DISCORD_CHANNEL_ID_AGENT="${4:-}"
+MODEL_PRIMARY="${5:-moonshot/kimi-k2.5}"
+
+[[ -n "$AGENT_ID" && -n "$ROLE" && -n "$DISCORD_BOT_TOKEN_AGENT" && -n "$DISCORD_CHANNEL_ID_AGENT" && -n "$MODEL_PRIMARY" ]] || {
+  echo "usage: syntella-spawn-agent <agent_id> <role> <discord_token> <channel_id> <model_primary>"
+  exit 2
+}
+
+set -a
+source /etc/openclaw/openclaw.env
+source /etc/openclaw/operator-bridge.env 2>/dev/null || true
+set +a
+
+ROOT_HOME="$HOME/.openclaw"
+ROOT_PROFILE="main"
+SHARED_WS_ROOT="$ROOT_HOME/workspace"
+AGENT_WS="$SHARED_WS_ROOT/$AGENT_ID"
+AGENT_DIR="$ROOT_HOME/agents/$AGENT_ID/agent"
+REGISTRY="$SHARED_WS_ROOT/agents/registry.json"
+SPAWN_LOG="$AGENT_WS/spawn.log"
+NATIVE_HELPER="$ROOT_HOME/operator-bridge/openclaw_native_agent.py"
+
+mkdir -p "$AGENT_WS/memory" "$SHARED_WS_ROOT/agents" "$ROOT_HOME/logs"
+
+log() { echo "$(date -Iseconds) $*" >> "$SPAWN_LOG"; }
+log "START: native agent_id=$AGENT_ID role='${ROLE:0:80}...'"
+
+DISPLAY_NAME="$(python3 -c "
+import sys
+s='$AGENT_ID'.replace('-', ' ').strip()
+print(' '.join(w.capitalize() for w in s.split()) or '$AGENT_ID')
+")"
+ACCOUNT_ID="${AGENT_ID//-/}"
+
+if [[ ! -f "$NATIVE_HELPER" ]]; then
+  echo "ERROR: native agent helper not found at $NATIVE_HELPER" >&2
+  exit 1
+fi
+
+mkdir -p "$AGENT_WS" "$AGENT_WS/memory" "$AGENT_DIR"
+
+# Seed workspace files.
+if [[ ! -f "$AGENT_WS/AGENTS.md" ]]; then
+  cp "$SHARED_WS_ROOT/AGENTS.SPAWNED.md" "$AGENT_WS/AGENTS.md" 2>/dev/null || true
+  sed -i "s|__AGENT_NAME__|${DISPLAY_NAME}|g; s|__AGENT_ID__|${AGENT_ID}|g" "$AGENT_WS/AGENTS.md" 2>/dev/null || true
+fi
+if [[ ! -f "$AGENT_WS/SOUL.md" ]]; then
+  cp "$SHARED_WS_ROOT/syntella/SOUL.md" "$AGENT_WS/SOUL.md" 2>/dev/null || true
+fi
+mkdir -p "$AGENT_WS/.openclaw/extensions" "$AGENT_WS/skills"
+
+if [[ -d "$SHARED_WS_ROOT/templates/extensions/seo/skills/seo-authority-operator" && "${SYNTELLA_AGENT_SPECIALTY:-}" == "seo" ]]; then
+  rm -rf "$AGENT_WS/skills/seo-authority-operator"
+  mkdir -p "$AGENT_WS/skills"
+  cp -R "$SHARED_WS_ROOT/templates/extensions/seo/skills/seo-authority-operator" "$AGENT_WS/skills/seo-authority-operator"
+fi
+
+today="$(date +%F)"
+yesterday="$(date -d 'yesterday' +%F 2>/dev/null || date -v-1d +%F 2>/dev/null || true)"
+[[ -f "$AGENT_WS/memory/${today}.md" ]] || echo "# ${today}" >"$AGENT_WS/memory/${today}.md"
+if [[ -n "$yesterday" ]]; then
+  [[ -f "$AGENT_WS/memory/${yesterday}.md" ]] || echo "# ${yesterday}" >"$AGENT_WS/memory/${yesterday}.md"
+fi
+
+log "Registering native agent in root OpenClaw config"
+python3 "$NATIVE_HELPER" \
+  --agent-id "$AGENT_ID" \
+  --display-name "$DISPLAY_NAME" \
+  --workspace "$AGENT_WS" \
+  --agent-dir "$AGENT_DIR" \
+  --account-id "$ACCOUNT_ID" \
+  --discord-token "$DISCORD_BOT_TOKEN_AGENT" \
+  --guild-id "__DISCORD_GUILD_ID__" \
+  --channel-id "$DISCORD_CHANNEL_ID_AGENT" \
+  --tool-profile "full" \
+  --mention-pattern "$AGENT_ID" \
+  --mention-pattern "$DISPLAY_NAME" >> "$SPAWN_LOG"
+
+log "Updating agent-specific config in root openclaw.json"
+python3 - "$ROOT_HOME/openclaw.json" "$AGENT_ID" "$MODEL_PRIMARY" "${SYNTELLA_AGENT_SPECIALTY:-}" <<'PY'
+import json, os, sqlite3, sys
+config_path, agent_id, model_primary, specialty = sys.argv[1:5]
+cfg = {}
+if os.path.exists(config_path):
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+agents = cfg.setdefault("agents", {})
+entries = agents.get("list")
+if not isinstance(entries, list):
+    entries = []
+for entry in entries:
+    if isinstance(entry, dict) and entry.get("id") == agent_id:
+        entry.setdefault("model", {})["primary"] = model_primary
+        tools = entry.get("tools")
+        if not isinstance(tools, dict):
+            tools = {}
+        tools["profile"] = "full"
+        default_tools = ["tasks", "reports"]
+        integration_tool_map = {
+            "ghost": "ghost",
+            "google_search_console": "search_console",
+            "google_analytics": "analytics",
+        }
+        db_path = os.path.expanduser("~/.openclaw/workspace/tasks.db")
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT system, enabled, allowed_specialties FROM integrations"
+                ).fetchall()
+                conn.close()
+                for row in rows:
+                    if not row["enabled"]:
+                        continue
+                    tool_name = integration_tool_map.get(row["system"])
+                    if not tool_name:
+                        continue
+                    try:
+                        allowed = json.loads(row["allowed_specialties"] or "[]")
+                    except Exception:
+                        allowed = []
+                    if allowed and specialty not in allowed:
+                        continue
+                    default_tools.append(tool_name)
+            except Exception:
+                pass
+        tools["allow"] = list(dict.fromkeys(default_tools))
+        entry["tools"] = tools
+        break
+main_entry = None
+for entry in entries:
+    if isinstance(entry, dict) and entry.get("id") == "main":
+        main_entry = entry
+        break
+if main_entry is None:
+    main_entry = {"id": "main"}
+    entries.insert(0, main_entry)
+main_entry["name"] = "Syntella"
+main_entry["workspace"] = os.path.expanduser("~/.openclaw/workspace/syntella")
+main_entry["agentDir"] = os.path.expanduser("~/.openclaw/agents/main/agent")
+identity = main_entry.get("identity")
+if not isinstance(identity, dict):
+    identity = {}
+identity["name"] = "Syntella"
+main_entry["identity"] = identity
+bindings = cfg.get("bindings")
+if not isinstance(bindings, list):
+    bindings = []
+main_binding = {
+    "agentId": "main",
+    "match": {
+        "channel": "discord",
+        "accountId": "default",
+    },
+}
+found = False
+for item in bindings:
+    if isinstance(item, dict) and item.get("agentId") == "main":
+        item.clear()
+        item.update(main_binding)
+        found = True
+        break
+if not found:
+    bindings.insert(0, main_binding)
+cfg["bindings"] = bindings
+with open(config_path, "w", encoding="utf-8") as f:
+    json.dump(cfg, f, indent=2)
+    f.write("\n")
+PY
+
+log "Updating registry, SOUL.md, and TEAM.md"
+python3 - "$AGENT_ID" "$ROLE" "$AGENT_WS" "$AGENT_DIR" "$DISCORD_CHANNEL_ID_AGENT" "${SYNTELLA_MONTHLY_BUDGET:-}" "${SYNTELLA_AGENT_SPECIALTY:-}" <<'PY'
+import json, os, re, sys
+
+agent, role_raw, workspace, agent_dir, channel_id, monthly_budget_raw, specialty = sys.argv[1:8]
+
+if " — " in role_raw:
+    role, personality = role_raw.split(" — ", 1)
+else:
+    role, personality = role_raw, ""
+
+try:
+    monthly_budget = float(monthly_budget_raw) if monthly_budget_raw.strip() else None
+except ValueError:
+    monthly_budget = None
+
+registry_path = os.path.expanduser("~/.openclaw/workspace/agents/registry.json")
+os.makedirs(os.path.dirname(registry_path), exist_ok=True)
+registry = {}
+if os.path.exists(registry_path):
+    try:
+        with open(registry_path, "r", encoding="utf-8") as f:
+            registry = json.load(f)
+    except Exception:
+        registry = {}
+
+entry = registry.get(agent, {}) if isinstance(registry, dict) else {}
+if not isinstance(entry, dict):
+    entry = {}
+entry.update({
+    "role": role.strip(),
+    "description": personality.strip(),
+    "personality": personality.strip(),
+    "workspace": workspace,
+    "agent_dir": agent_dir,
+    "channel_id": channel_id,
+    "monthly_budget": monthly_budget,
+    "specialty": specialty or None,
+})
+registry[agent] = entry
+with open(registry_path, "w", encoding="utf-8") as f:
+    json.dump(registry, f, indent=2)
+    f.write("\n")
+
+soul_path = os.path.join(workspace, "SOUL.md")
+base = ""
+if os.path.exists(soul_path):
+    with open(soul_path, "r", encoding="utf-8") as f:
+        base = f.read().rstrip() + "\n\n"
+identity_block = (
+    "## Identity\n\n"
+    f"- Name: {agent}\n"
+    f"- Role: {role.strip()}\n"
+    f"- Responsibilities: {(personality or role_raw).strip()}\n"
+)
+with open(soul_path, "w", encoding="utf-8") as f:
+    f.write(base + identity_block)
+
+shared_dir = os.path.expanduser("~/.openclaw/workspace/shared")
+os.makedirs(shared_dir, exist_ok=True)
+team_path = os.path.join(shared_dir, "TEAM.md")
+block = (
+    f"<!-- AGENT:{agent}:START -->\n"
+    f"- **{agent}**\n"
+    f"  - role: {role.strip()}\n"
+    f"  - personality: {(personality or role_raw).strip()}\n"
+    f"  - inbox_channel_id: {channel_id}\n"
+    f"  - monthly_budget_usd: {monthly_budget if monthly_budget is not None else 'unset'}\n"
+    f"  - specialty: {specialty or 'general'}\n"
+    f"<!-- AGENT:{agent}:END -->\n"
+)
+if os.path.exists(team_path):
+    with open(team_path, "r", encoding="utf-8") as f:
+        text = f.read()
+else:
+    text = "# TEAM.md\n\n## Agents\n\n"
+start = f"<!-- AGENT:{agent}:START -->"
+end = f"<!-- AGENT:{agent}:END -->"
+if start in text and end in text:
+    text = re.sub(re.escape(start) + r".*?" + re.escape(end) + r"\n?", block, text, flags=re.S)
+else:
+    if "## Agents" not in text:
+        text = text.rstrip() + "\n\n## Agents\n\n"
+    text = text.rstrip() + "\n\n" + block
+with open(team_path, "w", encoding="utf-8") as f:
+    f.write(text)
+PY
+
+log "Restarting root gateway to pick up native agent config"
+openclaw gateway stop >/dev/null 2>&1 || true
+pkill -f "openclaw gateway" >/dev/null 2>&1 || true
+sleep 1
+find "$ROOT_HOME" /tmp -name 'gateway.*.lock' -delete 2>/dev/null || true
+nohup bash -lc 'export PATH="$HOME/.npm-global/bin:$PATH"; exec openclaw gateway --port 18789' > "$ROOT_HOME/logs/gateway.log" 2>&1 &
+GATEWAY_PID=$!
+
+ready=0
+for _ in $(seq 1 30); do
+  if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ':18789 '; then
+    ready=1
+    break
+  fi
+  if command -v lsof >/dev/null 2>&1 && lsof -iTCP:18789 -sTCP:LISTEN >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  if ! kill -0 "$GATEWAY_PID" 2>/dev/null; then
+    echo "ERROR: root gateway died during restart" >&2
+    tail -n 50 "$ROOT_HOME/logs/gateway.log" >&2 || true
+    exit 1
+  fi
+  sleep 1
+done
+
+if [[ "$ready" != "1" ]]; then
+  echo "ERROR: root gateway did not become ready on port 18789 within 30s" >&2
+  tail -n 50 "$ROOT_HOME/logs/gateway.log" >&2 || true
+  exit 1
+fi
+
+log "NATIVE_SPAWN_COMPLETE gateway_pid=$GATEWAY_PID"
+python3 - "$DISCORD_CHANNEL_ID_AGENT" <<'PY'
+import json
+import sys
+print(json.dumps({
+    "ok": True,
+    "native": True,
+    "guild_configured": True,
+    "guild_id": "__DISCORD_GUILD_ID__",
+    "channel_id": sys.argv[1],
+}))
+PY

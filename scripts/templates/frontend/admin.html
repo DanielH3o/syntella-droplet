@@ -1,0 +1,1069 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Admin - Syntella</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="admin.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <header class="top-nav">
+      <div class="top-nav-left">
+        <div class="nav-brand">
+          <span class="nav-logo">Syntella</span>
+          <span class="nav-badge">Admin</span>
+        </div>
+        <nav class="nav-links">
+          <!-- Real <a> tags using #anchors, no javascript required! -->
+          <a href="#tasks" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+            Tasks
+          </a>
+          <a href="#routines" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+            Routines
+          </a>
+          <a href="#reports" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M16 13H8"></path><path d="M16 17H8"></path><path d="M10 9H8"></path></svg>
+            Reports
+          </a>
+          <a href="#budget" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22"></path><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+            Budget
+          </a>
+          <a href="#models" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M12 4h9"></path><path d="M4 9h16"></path><path d="M4 15h16"></path><path d="M8 4v16"></path></svg>
+            Models
+          </a>
+          <a href="#integrations" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20a6 6 0 0 0-12 0"></path><circle cx="12" cy="10" r="4"></circle><path d="M21 12h-2"></path><path d="M5 12H3"></path><path d="M12 3v2"></path><path d="M12 19v2"></path></svg>
+            Integrations
+          </a>
+          <a href="#team" class="nav-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            Team
+          </a>
+        </nav>
+      </div>
+      <div class="top-nav-right">
+        <span class="status-dot status-dot--online"></span>
+        <span>Preview Mode</span>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <section id="tasks" class="view-section" style="max-width:none">
+        <header class="view-header">
+          <div>
+            <h1 class="view-title">Tasks</h1>
+            <p class="text-muted mt-1 text-sm">Create tasks locally and drag them between columns to persist status changes</p>
+          </div>
+          <button id="task-new-button" class="btn btn-primary" type="button">New Task</button>
+        </header>
+        <form id="task-form" class="task-form is-hidden">
+          <div class="task-form__field">
+            <label class="form-label" for="task-title-input">Task</label>
+            <input id="task-title-input" name="title" placeholder="Fix local operator bridge auth" required />
+          </div>
+          <div class="task-form__field">
+            <label class="form-label" for="task-assignee-select">Assignee</label>
+            <select id="task-assignee-select" name="assignee">
+              <option value="syntella">syntella</option>
+            </select>
+          </div>
+          <div class="task-form__field">
+            <label class="form-label" for="task-priority-select">Priority</label>
+            <select id="task-priority-select" name="priority">
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+          <div class="task-form__actions">
+            <button id="task-cancel-button" class="btn btn-secondary" type="button">Cancel</button>
+            <button class="btn btn-primary" type="submit">Create</button>
+          </div>
+          <div class="task-form__field" style="grid-column: 1 / -1;">
+            <label class="form-label" for="task-description-input">Description</label>
+            <textarea id="task-description-input" name="description" placeholder="What needs doing, and by whom?"></textarea>
+          </div>
+        </form>
+        <div id="task-feedback" class="task-feedback" aria-live="polite"></div>
+        <div class="tasks-layout">
+          <div class="kanban-board">
+            <div class="kanban-column" data-status="backlog">
+              <div class="kanban-column-header"><h3 class="kanban-column-title">Backlog</h3><span class="kanban-count">0</span></div>
+              <div class="kanban-items"></div>
+            </div>
+            <div class="kanban-column" data-status="todo">
+              <div class="kanban-column-header"><h3 class="kanban-column-title">To Do</h3><span class="kanban-count">0</span></div>
+              <div class="kanban-items"></div>
+            </div>
+            <div class="kanban-column" data-status="in_progress">
+              <div class="kanban-column-header"><h3 class="kanban-column-title">In Progress</h3><span class="kanban-count">0</span></div>
+              <div class="kanban-items"></div>
+            </div>
+            
+            <div class="kanban-column" data-status="review">
+              <div class="kanban-column-header"><h3 class="kanban-column-title">Review</h3><span class="kanban-count">0</span></div>
+              <div class="kanban-items"></div>
+            </div>
+            
+            <div class="kanban-column" data-status="done">
+              <div class="kanban-column-header"><h3 class="kanban-column-title">Done</h3><span class="kanban-count">0</span></div>
+              <div class="kanban-items"></div>
+            </div>
+          </div>
+
+          <aside class="task-detail">
+            <h2 id="task-detail-title" class="task-detail__title">Select a task</h2>
+            <p id="task-detail-description" class="task-detail__sub">Choose a task card to inspect its estimated cost and run history.</p>
+            <div class="task-detail__stats">
+              <div class="task-detail__stat">
+                <span class="task-detail__label">Estimated Cost</span>
+                <span id="task-detail-cost" class="task-detail__value">$0.00</span>
+              </div>
+              <div class="task-detail__stat">
+                <span class="task-detail__label">Estimated Tokens</span>
+                <span id="task-detail-tokens" class="task-detail__value">0</span>
+              </div>
+              <div class="task-detail__stat">
+                <span class="task-detail__label">Assignee</span>
+                <span id="task-detail-assignee" class="task-detail__value">-</span>
+              </div>
+              <div class="task-detail__stat">
+                <span class="task-detail__label">Status</span>
+                <span id="task-detail-status" class="task-detail__value">-</span>
+              </div>
+            </div>
+            <div class="task-detail__section">
+              <h3 class="task-detail__section-title">Latest Run</h3>
+              <ul id="task-detail-latest-run" class="task-run-list">
+                <li><span>No run selected yet.</span></li>
+              </ul>
+            </div>
+            <div class="task-detail__section">
+              <h3 class="task-detail__section-title">Run History</h3>
+              <ul id="task-detail-runs" class="task-run-list">
+                <li><span>No runs recorded yet.</span></li>
+              </ul>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="routines" class="view-section">
+        <header class="view-header">
+          <div>
+            <h1 class="view-title">Routines</h1>
+            <p class="text-muted mt-1 text-sm">Recurring scheduled work for agents. Use routines for checks, reviews, and repeatable operating loops.</p>
+          </div>
+          <button id="routines-new-button" type="button" class="btn btn-primary">New Routine</button>
+        </header>
+        <div id="routines-shell" class="routines-shell">
+        <div class="models-summary">
+          <article class="models-card">
+            <p class="models-card__label">Total Routines</p>
+            <p id="routines-count" class="models-card__value">0</p>
+            <p id="routines-count-detail" class="models-card__detail">Recurring workflows defined in the system.</p>
+          </article>
+          <article class="models-card">
+            <p class="models-card__label">Enabled</p>
+            <p id="routines-enabled-count" class="models-card__value">0</p>
+            <p id="routines-enabled-detail" class="models-card__detail">Routines currently active.</p>
+          </article>
+          <article class="models-card">
+            <p class="models-card__label">Reports Generated</p>
+            <p id="routines-report-count" class="models-card__value">0</p>
+            <p id="routines-report-detail" class="models-card__detail">Reports currently attached to routines.</p>
+          </article>
+          <article class="models-card">
+            <p class="models-card__label">Most Recent Run</p>
+            <p id="routines-last-run" class="models-card__value">-</p>
+            <p id="routines-last-run-detail" class="models-card__detail">Latest recorded routine execution.</p>
+          </article>
+        </div>
+        <div class="models-layout mt-8">
+          <div class="models-panel">
+            <div class="models-panel__header">
+              <div>
+                <h2 class="models-panel__title">Routine Catalog</h2>
+                <p class="models-panel__meta">Friendly recurring jobs that can later be backed by cron or heartbeat-triggered orchestration.</p>
+              </div>
+            </div>
+            <table class="models-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Agent</th>
+                  <th>Schedule</th>
+                  <th>Status</th>
+                  <th>Last Run</th>
+                </tr>
+              </thead>
+              <tbody id="routines-table-body"></tbody>
+            </table>
+          </div>
+          <button type="button" id="routines-drawer-backdrop" class="routines-drawer-backdrop" aria-label="Close routine editor"></button>
+          <aside class="routines-drawer" aria-live="polite">
+            <div class="models-drawer__header">
+              <div>
+                <p class="models-drawer__eyebrow">Routine</p>
+                <h2 id="routine-detail-title" class="task-detail__title">No routine selected</h2>
+                <p id="routine-detail-description" class="task-detail__sub">The drawer stays closed until you click a routine or create a new one.</p>
+              </div>
+              <button type="button" id="routines-drawer-close" class="models-drawer__close" aria-label="Close routine editor">×</button>
+            </div>
+            <form id="routine-form" class="models-form mt-8">
+              <div class="models-form__grid">
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-name-input">Name</label>
+                  <input id="routine-name-input" placeholder="Daily Search Console Review" required />
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-agent-select">Agent</label>
+                  <select id="routine-agent-select" required>
+                    <option value="">Select an agent</option>
+                  </select>
+                </div>
+              </div>
+              <div class="models-form__grid">
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-schedule-type">Schedule Type</label>
+                  <select id="routine-schedule-type">
+                    <option value="daily">Daily</option>
+                    <option value="weekdays">Weekdays</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="hourly">Every X Hours</option>
+                    <option value="date">Date</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-schedule-preview">Schedule Preview</label>
+                  <input id="routine-schedule-preview" readonly />
+                </div>
+              </div>
+              <p id="routine-schedule-helper" class="models-helper">Runs every day at a specific local time.</p>
+              <div id="routine-schedule-daily-section" class="models-form__grid">
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-schedule-time">Run Time</label>
+                  <input id="routine-schedule-time" type="time" value="09:00" />
+                </div>
+              </div>
+              <div id="routine-schedule-weekly-section" class="models-form__grid" hidden>
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-schedule-day">Day</label>
+                  <select id="routine-schedule-day">
+                    <option value="1">Monday</option>
+                    <option value="2">Tuesday</option>
+                    <option value="3">Wednesday</option>
+                    <option value="4">Thursday</option>
+                    <option value="5">Friday</option>
+                    <option value="6">Saturday</option>
+                    <option value="0">Sunday</option>
+                  </select>
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-schedule-weekly-time">Run Time</label>
+                  <input id="routine-schedule-weekly-time" type="time" value="09:00" />
+                </div>
+              </div>
+              <div id="routine-schedule-hourly-section" class="models-form__grid" hidden>
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-schedule-hours">Interval</label>
+                  <input id="routine-schedule-hours" type="number" min="1" max="24" step="1" value="4" />
+                  <p class="models-helper">Runs every N hours from the top of the hour.</p>
+                </div>
+              </div>
+              <div id="routine-schedule-date-section" class="models-form__grid" hidden>
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-schedule-date">Date</label>
+                  <input id="routine-schedule-date" type="date" />
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-schedule-date-time">Run Time</label>
+                  <input id="routine-schedule-date-time" type="time" value="09:00" />
+                </div>
+              </div>
+              <div id="routine-schedule-custom-section" class="models-form__grid" hidden>
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-custom-cron">Cron Expression</label>
+                  <input id="routine-custom-cron" placeholder="0 9 * * 1-5" />
+                  <p class="models-helper">Advanced mode only. Use standard five-part cron syntax.</p>
+                </div>
+              </div>
+              <div class="models-form__grid">
+                <div class="task-form__field">
+                  <label class="form-label" for="routine-output-mode">Output Mode</label>
+                  <select id="routine-output-mode">
+                    <option value="report_only">Report only</option>
+                    <option value="report_if_needed" selected>Report if needed</option>
+                    <option value="report_and_task_if_needed">Report + create task if needed</option>
+                  </select>
+                </div>
+              </div>
+              <div class="task-form__field">
+                <label class="form-label" for="routine-report-channel-input">Report Channel ID (optional)</label>
+                <input id="routine-report-channel-input" placeholder="Send short summaries here later" />
+              </div>
+              <p class="models-helper">Schedules use the browser machine timezone automatically.</p>
+              <div class="task-form__field">
+                <label class="form-label" for="routine-prompt-input">Instruction</label>
+                <textarea id="routine-prompt-input" placeholder="Check Search Console performance, summarize wins/issues, and propose next changes."></textarea>
+              </div>
+              <label class="models-toggle">
+                <input id="routine-enabled-input" type="checkbox" checked />
+                <span>Enabled</span>
+              </label>
+              <div id="routine-feedback" class="models-feedback" aria-live="polite"></div>
+              <div class="models-form__actions">
+                <button class="btn btn-primary" type="submit">Save Routine</button>
+                <button id="routine-run-button" class="btn btn-secondary" type="button">Run Now</button>
+                <button id="routine-reset-button" class="btn btn-secondary" type="button">Clear</button>
+              </div>
+            </form>
+            <div class="task-detail__section">
+              <h3 class="task-detail__section-title">Recent Runs</h3>
+              <ul id="routine-runs-list" class="task-run-list">
+                <li><span>No routine selected.</span></li>
+              </ul>
+            </div>
+            <div class="task-detail__section">
+              <h3 class="task-detail__section-title">Linked Reports</h3>
+              <ul id="routine-reports-list" class="task-run-list">
+                <li><span>No routine selected.</span></li>
+              </ul>
+            </div>
+          </aside>
+        </div>
+        </div>
+      </section>
+
+      <section id="reports" class="view-section">
+        <header class="view-header">
+          <div>
+            <h1 class="view-title">Reports</h1>
+            <p class="text-muted mt-1 text-sm">Durable report history. Use Discord for alerts; use reports for summaries, analysis, and auditability.</p>
+          </div>
+        </header>
+        <div class="models-summary">
+          <article class="models-card">
+            <p class="models-card__label">Total Reports</p>
+            <p id="reports-count" class="models-card__value">0</p>
+            <p id="reports-count-detail" class="models-card__detail">Reports stored in the local control plane.</p>
+          </article>
+          <article class="models-card">
+            <p class="models-card__label">Today</p>
+            <p id="reports-today-count" class="models-card__value">0</p>
+            <p id="reports-today-detail" class="models-card__detail">Reports created today.</p>
+          </article>
+          <article class="models-card">
+            <p class="models-card__label">Latest Routine</p>
+            <p id="reports-latest-routine" class="models-card__value">-</p>
+            <p id="reports-latest-routine-detail" class="models-card__detail">Most recent routine with a report.</p>
+          </article>
+          <article class="models-card">
+            <p class="models-card__label">Latest Agent</p>
+            <p id="reports-latest-agent" class="models-card__value">-</p>
+            <p id="reports-latest-agent-detail" class="models-card__detail">Most recent agent to publish a report.</p>
+          </article>
+        </div>
+        <div class="tasks-layout mt-8">
+          <div class="models-panel">
+            <div class="models-panel__header">
+              <div>
+                <h2 class="models-panel__title">Report Feed</h2>
+                <p class="models-panel__meta">Routine outputs live here so they can be reviewed without trawling chat history.</p>
+              </div>
+            </div>
+            <table class="models-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Agent</th>
+                  <th>Routine</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody id="reports-table-body"></tbody>
+            </table>
+          </div>
+          <aside class="task-detail">
+            <h2 id="report-detail-title" class="task-detail__title">Select a report</h2>
+            <p id="report-detail-summary" class="task-detail__sub">Choose a report to inspect the durable summary and full body.</p>
+            <div class="task-detail__stats">
+              <div class="task-detail__stat">
+                <span class="task-detail__label">Agent</span>
+                <span id="report-detail-agent" class="task-detail__value">-</span>
+              </div>
+              <div class="task-detail__stat">
+                <span class="task-detail__label">Routine</span>
+                <span id="report-detail-routine" class="task-detail__value">-</span>
+              </div>
+              <div class="task-detail__stat">
+                <span class="task-detail__label">Status</span>
+                <span id="report-detail-status" class="task-detail__value">-</span>
+              </div>
+              <div class="task-detail__stat">
+                <span class="task-detail__label">Created</span>
+                <span id="report-detail-created" class="task-detail__value">-</span>
+              </div>
+            </div>
+            <div class="task-detail__section">
+              <h3 class="task-detail__section-title">Body</h3>
+              <div id="report-detail-body" class="task-detail__sub report-body">No report selected.</div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section id="budget" class="view-section">
+        <header class="view-header">
+          <div>
+            <h1 class="view-title">Budget</h1>
+            <p class="text-muted mt-1 text-sm">Live spend intelligence for agent usage, model mix, burn rate, and estimated task costs</p>
+          </div>
+        </header>
+        <div class="budget-shell">
+          <div class="budget-controls">
+            <div class="task-form__field">
+              <label class="form-label">Period</label>
+              <div class="budget-period-chip">Current calendar month</div>
+            </div>
+            <div class="task-form__field">
+              <label class="form-label" for="budget-agent-filter">Agent</label>
+              <select id="budget-agent-filter">
+                <option value="all" selected>All agents</option>
+              </select>
+            </div>
+            <div class="task-form__field">
+              <label class="form-label" for="budget-model-filter">Model</label>
+              <select id="budget-model-filter">
+                <option value="all" selected>All models</option>
+              </select>
+            </div>
+            <div class="task-form__field">
+              <label class="form-label" for="budget-view">View</label>
+              <select id="budget-view">
+                <option value="cost" selected>Cost focus</option>
+                <option value="tokens">Token focus</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="budget-panel budget-envelope">
+            <div class="budget-panel__header">
+              <div>
+                <h2 class="budget-panel__title">Budget Envelope</h2>
+                <p id="budget-envelope-meta" class="budget-panel__meta">Actual and projected spend against total configured agent budgets.</p>
+              </div>
+              <span id="budget-envelope-cap" class="budget-badge">Cap $0.00</span>
+            </div>
+            <div class="budget-envelope__numbers">
+              <div class="budget-envelope__stat">
+                <span class="budget-envelope__label">Actual</span>
+                <strong id="budget-envelope-actual">$0.00</strong>
+              </div>
+              <div class="budget-envelope__stat">
+                <span class="budget-envelope__label">Projected</span>
+                <strong id="budget-envelope-projected">$0.00</strong>
+              </div>
+              <div class="budget-envelope__stat">
+                <span class="budget-envelope__label">Total Budget</span>
+                <strong id="budget-envelope-total">$0.00</strong>
+              </div>
+            </div>
+            <div class="budget-envelope__track">
+              <div id="budget-envelope-projected-bar" class="budget-envelope__fill budget-envelope__fill--projected"></div>
+              <div id="budget-envelope-actual-bar" class="budget-envelope__fill budget-envelope__fill--actual"></div>
+            </div>
+            <div class="budget-envelope__legend">
+              <span><span class="budget-envelope__swatch budget-envelope__swatch--actual"></span> Actual current spend</span>
+              <span><span class="budget-envelope__swatch budget-envelope__swatch--projected"></span> Projected monthly spend</span>
+            </div>
+          </div>
+
+          <div class="budget-grid">
+            <article class="budget-card budget-card--hero">
+              <p class="budget-card__label">Projected Monthly Spend</p>
+              <p id="budget-projected-spend" class="budget-card__value">$0.00</p>
+              <p id="budget-projected-detail" class="budget-card__detail">Based on current burn rate.</p>
+            </article>
+            <article class="budget-card">
+              <p class="budget-card__label">Actual Spend</p>
+              <p id="budget-actual-spend" class="budget-card__value">$0.00</p>
+              <p id="budget-actual-detail" class="budget-card__detail">Across the selected window.</p>
+            </article>
+            <article class="budget-card">
+              <p class="budget-card__label">Tokens Processed</p>
+              <p id="budget-total-tokens" class="budget-card__value">0</p>
+              <p id="budget-token-detail" class="budget-card__detail">Input plus output tokens.</p>
+            </article>
+            <article class="budget-card">
+              <p class="budget-card__label">Highest Cost Agent</p>
+              <p id="budget-top-agent" class="budget-card__value">-</p>
+              <p id="budget-top-agent-detail" class="budget-card__detail">Largest share of spend.</p>
+            </article>
+          </div>
+
+          <div class="budget-layout">
+            <div class="budget-panel">
+              <div class="budget-panel__header">
+                <div>
+                  <h2 class="budget-panel__title">Budget Allocation</h2>
+                  <p id="budget-allocation-meta" class="budget-panel__meta">Team and orchestration burn against monthly caps.</p>
+                </div>
+                <span id="budget-health-badge" class="budget-badge">Healthy</span>
+              </div>
+              <div id="budget-allocation-list" class="budget-progress"></div>
+            </div>
+
+            <div class="budget-panel">
+              <div class="budget-panel__header">
+                <div>
+                  <h2 class="budget-panel__title">Alerts</h2>
+                  <p class="budget-panel__meta">Flags that would justify investigation before spend drifts further.</p>
+                </div>
+              </div>
+              <div id="budget-alerts" class="budget-alerts"></div>
+            </div>
+          </div>
+
+          <div class="budget-split">
+            <div class="budget-panel">
+              <div class="budget-panel__header">
+                <div>
+                  <h2 class="budget-panel__title">Spend by Agent</h2>
+                  <p class="budget-panel__meta">Who is consuming the budget in the selected slice.</p>
+                </div>
+              </div>
+              <div id="budget-agent-bars" class="budget-bars"></div>
+            </div>
+            <div class="budget-panel">
+              <div class="budget-panel__header">
+                <div>
+                  <h2 class="budget-panel__title">Spend by Model</h2>
+                  <p class="budget-panel__meta">Useful for seeing if premium models are concentrated in the right places.</p>
+                </div>
+              </div>
+              <div id="budget-model-bars" class="budget-bars"></div>
+            </div>
+          </div>
+
+          <div class="budget-panel">
+            <div class="budget-panel__header">
+              <div>
+                <h2 class="budget-panel__title">Top Cost Tasks</h2>
+                <p class="budget-panel__meta">Estimated task cost based on agent activity during each task run window.</p>
+              </div>
+            </div>
+            <table class="budget-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Assignee</th>
+                  <th>Status</th>
+                  <th>Runs</th>
+                  <th>Est. Cost</th>
+                </tr>
+              </thead>
+              <tbody id="budget-task-costs-body"></tbody>
+            </table>
+          </div>
+
+          <div class="budget-layout">
+            <div class="budget-panel">
+              <div class="budget-panel__header">
+                <div>
+                  <h2 class="budget-panel__title">Recent Usage Events</h2>
+                  <p class="budget-panel__meta">Recent imported usage from local OpenClaw session data.</p>
+                </div>
+              </div>
+              <table class="budget-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Agent</th>
+                    <th>Model</th>
+                    <th>Tokens</th>
+                    <th>Cost</th>
+                  </tr>
+                </thead>
+                <tbody id="budget-events-body"></tbody>
+              </table>
+            </div>
+
+            <div class="budget-panel">
+              <div class="budget-panel__header">
+                <div>
+                  <h2 class="budget-panel__title">Policy Notes</h2>
+                  <p class="budget-panel__meta">A good budget surface should make model governance legible, not just show totals.</p>
+                </div>
+              </div>
+              <div id="budget-policy-notes" class="budget-alerts"></div>
+              <p class="budget-mini-note">Spend and usage come from local OpenClaw session data. Task attribution is still estimated by agent and time window.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="models" class="view-section">
+        <header class="view-header">
+          <div>
+            <h1 class="view-title">Models</h1>
+            <p class="text-muted mt-1 text-sm">Manage the model catalog available to Syntella, with local pricing overrides layered on top of OpenClaw metadata</p>
+          </div>
+          <button id="models-new-button" class="btn btn-primary" type="button">New Model</button>
+        </header>
+        <div class="models-shell">
+          <div class="models-summary">
+            <article class="models-card">
+              <p class="models-card__label">Catalog Models</p>
+              <p id="models-count" class="models-card__value">0</p>
+              <p id="models-count-detail" class="models-card__detail">Known models across local metadata and observed usage.</p>
+            </article>
+            <article class="models-card">
+              <p class="models-card__label">Enabled</p>
+              <p id="models-enabled-count" class="models-card__value">0</p>
+              <p id="models-enabled-detail" class="models-card__detail">Models currently available for agent selection.</p>
+            </article>
+            <article class="models-card">
+              <p class="models-card__label">Missing Pricing</p>
+              <p id="models-missing-pricing" class="models-card__value">0</p>
+              <p id="models-missing-pricing-detail" class="models-card__detail">Models with zero or missing cost metadata.</p>
+            </article>
+            <article class="models-card">
+              <p class="models-card__label">Observed In Use</p>
+              <p id="models-observed-count" class="models-card__value">0</p>
+              <p id="models-observed-detail" class="models-card__detail">Models seen in imported OpenClaw usage events.</p>
+            </article>
+          </div>
+
+          <div class="models-layout">
+            <div class="models-panel">
+              <div class="models-panel__header">
+                <div>
+                  <h2 class="models-panel__title">Catalog</h2>
+                  <p class="models-panel__meta">OpenClaw metadata is the base layer. Syntella overrides can change availability and pricing without touching upstream files.</p>
+                </div>
+              </div>
+              <div class="models-controls">
+                <div class="task-form__field">
+                  <label class="form-label" for="models-search">Search</label>
+                  <input id="models-search" placeholder="Search provider, model, or label" />
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="models-provider-filter">Provider</label>
+                  <select id="models-provider-filter">
+                    <option value="all">All providers</option>
+                  </select>
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="models-status-filter">Status</label>
+                  <select id="models-status-filter">
+                    <option value="all">All models</option>
+                    <option value="enabled">Enabled only</option>
+                    <option value="disabled">Disabled only</option>
+                    <option value="missing_pricing">Missing pricing</option>
+                    <option value="observed">Observed in use</option>
+                  </select>
+                </div>
+              </div>
+              <table class="models-table">
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Provider</th>
+                    <th>Status</th>
+                    <th>Input</th>
+                    <th>Output</th>
+                  </tr>
+                </thead>
+                <tbody id="models-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+          <button type="button" id="models-drawer-backdrop" class="models-drawer-backdrop" aria-label="Close model editor"></button>
+          <aside class="models-drawer" aria-live="polite">
+            <div class="models-drawer__header">
+              <div>
+                <p class="models-drawer__eyebrow">Model Editor</p>
+                <h2 id="models-editor-title" class="models-panel__title">New Model</h2>
+                <p id="models-editor-meta" class="models-panel__meta">Add a model to the shared OpenClaw catalog or update an existing one.</p>
+              </div>
+              <button type="button" id="models-drawer-close" class="models-drawer__close" aria-label="Close model editor">×</button>
+            </div>
+            <form id="models-form" class="models-form">
+              <div class="models-form__grid">
+                <div class="task-form__field">
+                  <label class="form-label" for="model-provider-input">Provider</label>
+                  <input id="model-provider-input" name="provider" placeholder="google" required />
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="model-id-input">Model ID</label>
+                  <input id="model-id-input" name="model_id" placeholder="gemini-3.1-pro-preview" required />
+                </div>
+              </div>
+              <div class="task-form__field">
+                <label class="form-label" for="model-display-name-input">Display Name</label>
+                <input id="model-display-name-input" name="display_name" placeholder="Gemini 3.1 Pro Preview" />
+              </div>
+              <div class="models-form__grid">
+                <div class="task-form__field">
+                  <label class="form-label" for="model-provider-base-url-input">Provider Base URL</label>
+                  <input id="model-provider-base-url-input" name="provider_base_url" placeholder="https://generativelanguage.googleapis.com/v1beta" />
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="model-provider-api-adapter-input">Provider Adapter</label>
+                  <input id="model-provider-api-adapter-input" name="provider_api_adapter" placeholder="google-generative-ai" />
+                </div>
+              </div>
+              <div class="task-form__field">
+                <label class="form-label" for="model-provider-api-key-input">API Key</label>
+                <input id="model-provider-api-key-input" name="provider_api_key" placeholder="Leave blank to keep any existing provider key" />
+                <p id="model-provider-api-key-help" class="models-helper">Stored in OpenClaw config. Existing keys are never shown back in the UI.</p>
+              </div>
+              <div class="models-form__toggles">
+                <label class="models-toggle"><input id="model-enabled-input" type="checkbox" checked /> Enabled</label>
+                <label class="models-toggle"><input id="model-reasoning-input" type="checkbox" /> Reasoning Model</label>
+              </div>
+              <div class="task-form__field">
+                <label class="form-label" for="model-modalities-input">Input Modalities</label>
+                <input id="model-modalities-input" name="input_modalities" placeholder="text,image" />
+              </div>
+              <div class="models-form__grid">
+                <div class="task-form__field">
+                  <label class="form-label" for="model-context-window-input">Context Window</label>
+                  <input id="model-context-window-input" name="context_window" inputmode="numeric" placeholder="1000000" />
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="model-max-tokens-input">Max Tokens</label>
+                  <input id="model-max-tokens-input" name="max_tokens" inputmode="numeric" placeholder="8192" />
+                </div>
+              </div>
+              <div class="models-form__grid">
+                <div class="task-form__field">
+                  <label class="form-label" for="model-cost-input-input">Input Cost / 1M</label>
+                  <input id="model-cost-input-input" name="cost_input" inputmode="decimal" placeholder="0.00" />
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="model-cost-output-input">Output Cost / 1M</label>
+                  <input id="model-cost-output-input" name="cost_output" inputmode="decimal" placeholder="0.00" />
+                </div>
+              </div>
+              <div class="models-form__grid">
+                <div class="task-form__field">
+                  <label class="form-label" for="model-cost-cache-read-input">Cache Read Cost / 1M</label>
+                  <input id="model-cost-cache-read-input" name="cost_cache_read" inputmode="decimal" placeholder="0.00" />
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="model-cost-cache-write-input">Cache Write Cost / 1M</label>
+                  <input id="model-cost-cache-write-input" name="cost_cache_write" inputmode="decimal" placeholder="0.00" />
+                </div>
+              </div>
+              <div class="task-form__field">
+                <label class="form-label" for="model-notes-input">Notes</label>
+                <textarea id="model-notes-input" name="notes" placeholder="Explain why this override exists, or leave blank."></textarea>
+              </div>
+              <div id="models-feedback" class="models-feedback" aria-live="polite"></div>
+              <div class="models-form__actions">
+                <button class="btn btn-primary" type="submit">Save Model</button>
+                <button id="models-reset-button" class="btn btn-secondary" type="button">Clear Override</button>
+                <button id="models-cancel-button" class="btn btn-secondary" type="button">Close</button>
+              </div>
+            </form>
+          </aside>
+        </div>
+      </section>
+
+      <section id="integrations" class="view-section">
+        <header class="view-header">
+          <div>
+            <h1 class="view-title">Integrations</h1>
+            <p class="text-muted mt-1 text-sm">Connect Ghost, Search Console, Analytics, and other external systems without editing OpenClaw config by hand. Click an integration row to configure it.</p>
+          </div>
+        </header>
+        <div class="integrations-shell">
+          <div class="models-summary">
+            <article class="models-card">
+              <p class="models-card__label">Total Integrations</p>
+              <p id="integrations-count" class="models-card__value">0</p>
+              <p id="integrations-count-detail" class="models-card__detail">Known external systems Syntella can connect to.</p>
+            </article>
+            <article class="models-card">
+              <p class="models-card__label">Enabled</p>
+              <p id="integrations-enabled-count" class="models-card__value">0</p>
+              <p id="integrations-enabled-detail" class="models-card__detail">Available for connected tooling right now.</p>
+            </article>
+            <article class="models-card">
+              <p class="models-card__label">Configured</p>
+              <p id="integrations-configured-count" class="models-card__value">0</p>
+              <p id="integrations-configured-detail" class="models-card__detail">Have some live config or credentials saved.</p>
+            </article>
+            <article class="models-card">
+              <p class="models-card__label">SEO Scoped</p>
+              <p id="integrations-seo-count" class="models-card__value">0</p>
+              <p id="integrations-seo-detail" class="models-card__detail">Currently limited to SEO-specialist agents.</p>
+            </article>
+          </div>
+          <div class="models-layout mt-8">
+            <div class="models-panel">
+              <div class="models-panel__header">
+                <div>
+                  <h2 class="models-panel__title">Integration Catalog</h2>
+                  <p class="models-panel__meta">Credentials are write-only in the UI. Connected tools should read from this control layer.</p>
+                </div>
+              </div>
+              <table class="models-table">
+                <thead>
+                  <tr>
+                    <th>Integration</th>
+                    <th>Status</th>
+                    <th>Access</th>
+                    <th>Secrets</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody id="integrations-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+          <button type="button" id="integrations-drawer-backdrop" class="integrations-drawer-backdrop" aria-label="Close integration editor"></button>
+          <aside class="integrations-drawer" aria-live="polite">
+            <div class="models-drawer__header">
+              <div>
+                <p class="models-drawer__eyebrow">Integration</p>
+                <h2 id="integrations-editor-title" class="team-chart__panel-title">Configure Integration</h2>
+                <p id="integrations-editor-meta" class="team-chart__panel-role">Select a system and store the config the matching tools will need.</p>
+              </div>
+              <button type="button" id="integrations-drawer-close" class="models-drawer__close" aria-label="Close integration editor">×</button>
+            </div>
+            <form id="integrations-form" class="models-form mt-8">
+              <div class="models-form__grid">
+                <div class="task-form__field">
+                  <label class="form-label" for="integration-system-value">System</label>
+                  <div id="integration-system-value" class="budget-period-chip">Select an integration row</div>
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="integration-scope-select">Allowed Specialty</label>
+                  <select id="integration-scope-select" name="allowed_specialties">
+                    <option value="seo" selected>SEO agents only</option>
+                    <option value="">All specialties</option>
+                  </select>
+                </div>
+              </div>
+              <div class="models-form__toggles">
+                <label class="models-toggle"><input id="integration-enabled-input" type="checkbox" /> Enabled</label>
+              </div>
+              <div id="integration-dynamic-fields" class="models-form"></div>
+              <div class="task-form__field">
+                <label class="form-label" for="integration-notes-input">Notes</label>
+                <textarea id="integration-notes-input" name="notes" placeholder="What this integration is for, any setup assumptions, or who owns it."></textarea>
+              </div>
+              <div id="integrations-feedback" class="models-feedback" aria-live="polite"></div>
+              <div class="models-form__actions">
+                <button class="btn btn-primary" type="submit">Save Integration</button>
+                <button id="integrations-reset-button" class="btn btn-secondary" type="button">Clear Config</button>
+                <button id="integrations-cancel-button" class="btn btn-secondary" type="button">Close</button>
+              </div>
+            </form>
+          </aside>
+        </div>
+      </section>
+
+      <section id="team" class="view-section">
+        <header class="view-header">
+          <div>
+            <h1 class="view-title">Team</h1>
+            <p class="text-muted mt-1 text-sm">Main sits at the top as the orchestrator, with the rest of the team shown as peer agents beneath it.</p>
+          </div>
+          <button id="team-new-agent-button" class="btn btn-primary" type="button">New Agent</button>
+        </header>
+        <div id="team-chart-shell" class="team-chart">
+          <div class="team-chart__layout">
+            <div class="team-chart__tree">
+              <div class="team-chart__root">
+                <button
+                  type="button"
+                  id="team-chart-root-node"
+                  class="org-node org-node--root org-node--hero"
+                  data-agent-name="main"
+                  data-agent-role="Main Agent"
+                  data-agent-status="Running"
+                  data-agent-focus="System orchestration, delegation, oversight"
+                  data-agent-desc="Primary local OpenClaw profile acting as the root of the team."
+                  data-agent-responsibilities="Routes and coordinates local work|Owns the primary profile|Acts as root for the team view"
+                >
+                  <span class="org-node__eyebrow"><span class="status-dot status-dot--online"></span> Root Agent</span>
+                  <div class="org-node__title-row">
+                    <h3 class="org-node__name">main</h3>
+                    <span class="org-pill">Primary profile</span>
+                  </div>
+                  <p class="org-node__role">Main Orchestrator</p>
+                  <p class="org-node__desc">Primary local OpenClaw profile.</p>
+                  <div class="org-node__meta">
+                    <span class="org-pill">Discovered locally</span>
+                    <span class="org-pill">Team root</span>
+                  </div>
+                </button>
+              </div>
+
+              <div id="team-chart-members" class="team-chart__members">
+                <div class="team-chart__member">
+                  <button
+                    type="button"
+                    class="org-node"
+                    data-agent-name="kiwi-dev"
+                    data-agent-role="Team Member"
+                    data-agent-status="Running"
+                    data-agent-focus="Discovered local agent"
+                    data-agent-desc="Discovered local agent."
+                    data-agent-responsibilities="Handles assigned work|Operates as an independent agent|Visible under main in the team view"
+                  >
+                    <span class="org-node__eyebrow"><span class="status-dot status-dot--online"></span> Team Member</span>
+                    <div class="org-node__title-row">
+                      <h3 class="org-node__name">kiwi-dev</h3>
+                      <span class="org-pill">Team Member</span>
+                    </div>
+                    <p class="org-node__role">Discovered local agent.</p>
+                    <p class="org-node__desc">Handles assigned work and appears under the main profile.</p>
+                  </button>
+                </div>
+
+                <div class="team-chart__member">
+                  <button
+                    type="button"
+                    class="org-node"
+                    data-agent-name="kiwi-worker"
+                    data-agent-role="Team Member"
+                    data-agent-status="Offline"
+                    data-agent-focus="Discovered local agent"
+                    data-agent-desc="Discovered local agent."
+                    data-agent-responsibilities="Handles assigned work|Operates as an independent agent|Visible under main in the team view"
+                  >
+                    <span class="org-node__eyebrow"><span class="status-dot status-dot--offline"></span> Team Member</span>
+                    <div class="org-node__title-row">
+                      <h3 class="org-node__name">kiwi-worker</h3>
+                      <span class="org-pill">Team Member</span>
+                    </div>
+                    <p class="org-node__role">Discovered local agent.</p>
+                    <p class="org-node__desc">Handles assigned work and appears under the main profile.</p>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <button type="button" id="team-chart-panel-backdrop" class="team-chart__panel-backdrop" aria-label="Close selected agent details"></button>
+            <button type="button" id="agent-drawer-backdrop" class="agent-drawer-backdrop" aria-label="Close agent creation"></button>
+            <aside class="team-chart__panel" aria-live="polite">
+              <div class="team-chart__panel-header">
+                <div>
+                  <p class="team-chart__panel-label">Selected Agent</p>
+                  <h2 id="org-panel-name" class="team-chart__panel-title">No agent selected</h2>
+                  <p id="org-panel-role" class="team-chart__panel-role">Pick any agent card in the team view</p>
+                </div>
+                <button type="button" id="team-chart-panel-close" class="team-chart__panel-close" aria-label="Close selected agent details">×</button>
+              </div>
+              <p id="org-panel-desc" class="team-chart__panel-copy">The drawer stays closed until you click an agent.</p>
+              <ul id="org-panel-responsibilities" class="team-chart__panel-list">
+                <li>Select an agent to inspect status, role, and responsibilities.</li>
+              </ul>
+              <div class="task-form__field">
+                <label class="form-label" for="org-panel-budget-input">Monthly Budget (USD)</label>
+                <input id="org-panel-budget-input" inputmode="decimal" placeholder="Unset" />
+                <p id="org-panel-budget-help" class="models-helper">Select an agent to configure their budget cap.</p>
+              </div>
+              <div class="task-form__field">
+                <label class="form-label">Enabled Tools</label>
+                <div id="org-panel-tools" class="agent-tools-list"></div>
+                <p id="org-panel-tools-help" class="models-helper">Select an agent to control which OpenClaw tools they can actually use.</p>
+              </div>
+              <div id="org-panel-budget-feedback" class="agent-feedback" aria-live="polite"></div>
+              <div class="models-form__actions">
+                <button type="button" id="org-panel-budget-save" class="btn btn-primary">Save Agent Settings</button>
+              </div>
+              <div class="team-chart__panel-footer">
+                <span id="org-panel-status">Status: -</span>
+                <span id="org-panel-focus">Focus: -</span>
+              </div>
+            </aside>
+
+            <aside class="agent-drawer" aria-live="polite">
+              <div class="agent-drawer__header">
+                <div>
+                  <p class="agent-drawer__eyebrow">New Agent</p>
+                  <h2 class="team-chart__panel-title">Create Agent</h2>
+                  <p class="team-chart__panel-role">Provision a local OpenClaw agent from the Team page.</p>
+                </div>
+                <button type="button" id="agent-drawer-close" class="agent-drawer__close" aria-label="Close agent creation">×</button>
+              </div>
+              <form id="agent-form" class="agent-form">
+                <div class="models-form__grid">
+                  <div class="task-form__field">
+                    <label class="form-label" for="agent-name-input">Agent ID</label>
+                    <input id="agent-name-input" name="agent_id" placeholder="kiwi-ops" required />
+                  </div>
+                  <div class="task-form__field">
+                    <label class="form-label" for="agent-role-input">Role</label>
+                    <input id="agent-role-input" name="role" placeholder="Operations Analyst" required />
+                  </div>
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="agent-description-input">Description</label>
+                  <textarea id="agent-description-input" name="description" placeholder="What this agent is for and how it should behave." required></textarea>
+                </div>
+                <div class="models-form__grid">
+                  <div class="task-form__field">
+                    <label class="form-label" for="agent-model-select">Primary Model</label>
+                    <select id="agent-model-select" name="model_primary" required>
+                      <option value="">Select a model</option>
+                    </select>
+                  </div>
+                  <div class="task-form__field">
+                    <label class="form-label" for="agent-specialty-select">Specialty</label>
+                    <select id="agent-specialty-select" name="specialty">
+                      <option value="" selected>General agent</option>
+                      <option value="seo">SEO agent</option>
+                    </select>
+                  </div>
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="agent-monthly-budget-input">Monthly Budget (USD)</label>
+                  <input id="agent-monthly-budget-input" name="monthly_budget" inputmode="decimal" placeholder="120" />
+                  <p class="models-helper">Optional monthly spend cap used by the Budget page and team planning.</p>
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="agent-discord-token-input">Discord Bot Token</label>
+                  <input id="agent-discord-token-input" name="discord_token" placeholder="Required by current spawn bridge" required />
+                  <p class="models-helper">The current operator bridge still requires a Discord token for provisioning.</p>
+                </div>
+                <div class="task-form__field">
+                  <label class="form-label" for="agent-channel-id-input">Inbox Channel ID</label>
+                  <input id="agent-channel-id-input" name="channel_id" inputmode="numeric" placeholder="123456789012345678" required />
+                  <p class="models-helper">This agent will listen only to this Discord channel. Treat it as the agent's inbox.</p>
+                </div>
+                <div id="agent-feedback" class="agent-feedback" aria-live="polite"></div>
+                <div class="models-form__actions">
+                  <button class="btn btn-primary" type="submit">Create Agent</button>
+                  <button id="agent-cancel-button" class="btn btn-secondary" type="button">Close</button>
+                </div>
+              </form>
+            </aside>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  
+  <script src="admin-core.js"></script>
+  <script src="admin-work.js"></script>
+  <script src="admin-models.js"></script>
+  <script src="admin-integrations.js"></script>
+  <script src="admin-budget.js"></script>
+  <script src="admin-team.js"></script>
+</body>
+</html>
