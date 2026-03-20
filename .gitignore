@@ -1,0 +1,58 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# SQLite database files
+*.sqlite3
+*.db
+
+# Environment files
+.env
+*.env
+
+# VSCode
+.vscode/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Python virtualenv
+.venv/
+venv/
+env/
+ENV/
+
+# Node-related things (if any workspace assets)
+node_modules/
+
+# Local data and workspace
+workspace/
+openclaw_workspace/
+.openclaw/
+
+# Compiled binary artifacts
+*.so
+*.pyd
+*.dll
+*.o
+*.a
+*.dylib
+
+# Backup files
+*~
+*.swp
+*.swo
+*.bak
+
+# Miscellaneous
+dist/
+build/
+.eggs/
+*.egg-info/
+.idea/
+# System junk
+Thumbs.db

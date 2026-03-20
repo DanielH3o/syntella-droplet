@@ -30,6 +30,8 @@ OPERATOR_BRIDGE_URL = os.environ.get("SYNTELLA_OPERATOR_BRIDGE_URL", "http://127
 DB_PATH = WORKSPACE / "tasks.db"
 REGISTRY = WORKSPACE / "agents" / "registry.json"
 FRONTEND_ROOT = Path(__file__).resolve().parent / "templates" / "frontend"
+PORTAL_API_TOKEN = os.environ.get("SYNTELLA_PORTAL_API_TOKEN", "").strip()
+ENABLE_DROPLET_FRONTEND = os.environ.get("SYNTELLA_ENABLE_DROPLET_FRONTEND", "").strip().lower() in {"1", "true", "yes", "on"}
 OPENCLAW_GATEWAY_PORT = int(os.environ.get("OPENCLAW_GATEWAY_PORT", "18789"))
 OPENCLAW_GATEWAY_LOG = OPENCLAW_STATE_DIR / "logs" / "gateway.log"
 USAGE_SYNC_MAX_EVENTS = int(os.environ.get("SYNTELLA_USAGE_SYNC_MAX_EVENTS", "20000"))
@@ -2440,9 +2442,31 @@ class Handler(BaseHTTPRequestHandler):
         self._send_bytes(200, file_path.read_bytes(), content_type)
 
     def _handle_static(self, path):
+        if not ENABLE_DROPLET_FRONTEND:
+            self._send_json(404, {"error": "not_found"})
+            return
         route_map = {"/": "index.html", "/admin": "admin.html"}
         target = route_map.get(path, path.lstrip("/"))
         self._serve_file(target)
+
+    def _require_api_auth(self):
+        if not PORTAL_API_TOKEN:
+            self._send_json(503, {
+                "ok": False,
+                "error": "portal_api_token_not_configured",
+            })
+            return False
+
+        auth_header = (self.headers.get("Authorization") or "").strip()
+        expected = f"Bearer {PORTAL_API_TOKEN}"
+        if auth_header != expected:
+            self._send_json(401, {
+                "ok": False,
+                "error": "unauthorized",
+            })
+            return False
+
+        return True
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -2450,7 +2474,15 @@ class Handler(BaseHTTPRequestHandler):
         params = parse_qs(parsed.query)
 
         if path == "/health":
-            return self._send_json(200, {"ok": True, "service": "syntella-local-dev"})
+            return self._send_json(200, {
+                "ok": True,
+                "service": "syntella-local-dev",
+                "portal_api_ready": bool(PORTAL_API_TOKEN),
+                "frontend_enabled": ENABLE_DROPLET_FRONTEND,
+            })
+
+        if path.startswith("/api/") and not self._require_api_auth():
+            return
 
         if path == "/api/health":
             agents = discover_openclaw_agents()
@@ -2459,6 +2491,7 @@ class Handler(BaseHTTPRequestHandler):
                 "service": "syntella-local-dev",
                 "uptime_seconds": None,
                 "agents_total": len(agents),
+                "portal_api_ready": True,
             })
 
         if path in ("/api/agents", "/api/departments"):
@@ -2542,6 +2575,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path.startswith("/api/") and not self._require_api_auth():
+            return
 
         if path == "/api/usage/sync":
             return self._send_json(200, {"ok": True, **sync_usage_events()})
@@ -2638,6 +2674,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/") and not self._require_api_auth():
+            return
         if path.startswith("/api/routines/"):
             routine_id = path.rsplit("/", 1)[-1]
             if not routine_id.isdigit():
@@ -2701,6 +2739,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/") and not self._require_api_auth():
+            return
         if path == "/api/models/overrides":
             body = self._parse_body()
             provider = (body.get("provider") or "").strip()
