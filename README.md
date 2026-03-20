@@ -103,7 +103,7 @@ adduser openclaw
 usermod -aG sudo openclaw
 su - openclaw
 
-git clone https://github.com/DanielH3o/syntella.git
+git clone https://github.com/DanielH3o/syntella-droplet.git
 cd syntella
 export DISCORD_BOT_TOKEN="YOUR_DISCORD_BOT_TOKEN"
 export DISCORD_TARGET="YOUR_GUILD_ID/YOUR_CHANNEL_ID"
