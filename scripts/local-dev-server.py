@@ -19,6 +19,7 @@ from urllib.request import Request, urlopen
 from urllib.parse import parse_qs, urlparse
 
 PORT = int(os.environ.get("SYNTELLA_DEV_PORT", "3000"))
+BIND_HOST = os.environ.get("SYNTELLA_API_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1"
 WORKSPACE = Path(os.environ.get("SYNTELLA_WORKSPACE", os.path.expanduser("~/.openclaw/workspace")))
 OPENCLAW_STATE_DIR = Path(
     os.environ.get("OPENCLAW_STATE_DIR", os.path.expanduser("~/.openclaw"))
@@ -2788,8 +2789,8 @@ def main():
     init_db()
     sync_usage_events()
     backfill_active_task_runs()
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"Syntella local dev server listening on http://127.0.0.1:{PORT}", flush=True)
+    server = ThreadingHTTPServer((BIND_HOST, PORT), Handler)
+    print(f"Syntella local dev server listening on http://{BIND_HOST}:{PORT}", flush=True)
     print(f"Using workspace: {WORKSPACE}", flush=True)
     print(f"Reading OpenClaw state from: {OPENCLAW_STATE_DIR}", flush=True)
     try:

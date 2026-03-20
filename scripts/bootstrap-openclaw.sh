@@ -34,6 +34,8 @@ FRONTEND_ENABLED="${FRONTEND_ENABLED:-1}"
 FRONTEND_URL=""
 # Lock frontend to this source IP/CIDR (required when FRONTEND_ENABLED=1), e.g. "203.0.113.10" or "203.0.113.0/24".
 FRONTEND_ALLOWED_IP="${FRONTEND_ALLOWED_IP:-}"
+SYNTELLA_PORTAL_API_TOKEN="${SYNTELLA_PORTAL_API_TOKEN:-}"
+SYNTELLA_ENABLE_DROPLET_FRONTEND="${SYNTELLA_ENABLE_DROPLET_FRONTEND:-0}"
 PUBLIC_IP_CACHE="${PUBLIC_IP_CACHE:-}"
 # Exec approval posture for runtime command execution:
 # - full: no interactive exec approvals (default for this droplet kit)
@@ -44,6 +46,7 @@ SYNTELLA_EXEC_MAX_OUTPUT_BYTES="${SYNTELLA_EXEC_MAX_OUTPUT_BYTES:-16384}"
 OPERATOR_BRIDGE_PORT="${OPERATOR_BRIDGE_PORT:-8787}"
 OPERATOR_BRIDGE_TOKEN=""
 SYNTELLA_API_PORT="${SYNTELLA_API_PORT:-8788}"
+SYNTELLA_API_BIND_HOST="${SYNTELLA_API_BIND_HOST:-127.0.0.1}"
 SYNTELLA_PRESERVE_CUSTOMER_STATE="${SYNTELLA_PRESERVE_CUSTOMER_STATE:-1}"
 
 # OPENCLAW_HOME should point to the user home base (e.g. /home/openclaw), not ~/.openclaw.
@@ -201,9 +204,12 @@ install_syntella_api() {
 
   sudo tee "$env_file" >/dev/null <<EOF
 SYNTELLA_DEV_PORT=${SYNTELLA_API_PORT}
+SYNTELLA_API_BIND_HOST=${SYNTELLA_API_BIND_HOST}
 SYNTELLA_WORKSPACE=${HOME}/.openclaw/workspace
 OPENCLAW_STATE_DIR=${HOME}/.openclaw
 SYNTELLA_OPERATOR_BRIDGE_URL=http://127.0.0.1:${OPERATOR_BRIDGE_PORT}
+SYNTELLA_PORTAL_API_TOKEN=${SYNTELLA_PORTAL_API_TOKEN}
+SYNTELLA_ENABLE_DROPLET_FRONTEND=${SYNTELLA_ENABLE_DROPLET_FRONTEND}
 EOF
   sudo chown root:openclaw "$env_file"
   sudo chmod 640 "$env_file"
@@ -242,7 +248,7 @@ EOF
   # Wait for service to be healthy (up to 15 seconds)
   local waited=0
   while (( waited < 15 )); do
-    if curl -fsS --max-time 2 "http://127.0.0.1:${SYNTELLA_API_PORT}/api/health" >/dev/null 2>&1; then
+    if curl -fsS --max-time 2 "http://127.0.0.1:${SYNTELLA_API_PORT}/health" >/dev/null 2>&1; then
       echo "Syntella API started (systemd service, port=${SYNTELLA_API_PORT})"
       return 0
     fi
@@ -253,7 +259,7 @@ EOF
   echo "Warning: Syntella API did not respond to health check within 15s."
   echo "Check status: sudo systemctl status syntella-api"
   echo "Check logs: sudo journalctl -u syntella-api -n 50"
-  echo "Health check: curl http://127.0.0.1:${SYNTELLA_API_PORT}/api/health"
+  echo "Health check: curl http://127.0.0.1:${SYNTELLA_API_PORT}/health"
 }
 
 ensure_node_and_npm() {
@@ -602,6 +608,8 @@ setup_openclaw_env_file() {
 # Source this file before starting OpenClaw-related processes.
 MOONSHOT_API_KEY="${MOONSHOT_API_KEY}"
 OPENCLAW_HOME="${HOME}"
+SYNTELLA_PORTAL_API_TOKEN="${SYNTELLA_PORTAL_API_TOKEN}"
+SYNTELLA_ENABLE_DROPLET_FRONTEND="${SYNTELLA_ENABLE_DROPLET_FRONTEND}"
 EOF
   sudo chown root:openclaw "$env_file"
   sudo chmod 640 "$env_file"
