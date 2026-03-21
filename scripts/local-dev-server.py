@@ -1234,13 +1234,14 @@ def compile_routine_schedule(body):
     raise ValueError("Unsupported schedule type.")
 
 
-def run_openclaw_command(args):
+def run_openclaw_command(args, env=None, timeout=20):
+    runtime_env = dict(env or build_openclaw_runtime_env())
     result = subprocess.run(
         ["openclaw", *args],
         capture_output=True,
         text=True,
-        timeout=20,
-        env=os.environ.copy(),
+        timeout=timeout,
+        env=runtime_env,
     )
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "").strip()
@@ -1501,6 +1502,7 @@ def sync_routine_cron_job(routine):
     if not cron_expression:
         raise RuntimeError("Routine is missing a compiled cron expression.")
 
+    command_output = ""
     if existing_job_id:
         args = [
             "cron", "edit", existing_job_id,
@@ -1514,7 +1516,7 @@ def sync_routine_cron_job(routine):
             args.extend(["--at", cron_expression, "--delete-after-run"])
         else:
             args.extend(["--cron", cron_expression])
-        run_openclaw_command(args)
+        command_output = run_openclaw_command(args)
     else:
         args = [
             "cron", "add",
@@ -1528,7 +1530,7 @@ def sync_routine_cron_job(routine):
             args.extend(["--at", cron_expression, "--delete-after-run"])
         else:
             args.extend(["--cron", cron_expression])
-        run_openclaw_command(args)
+        command_output = run_openclaw_command(args)
 
     jobs = read_openclaw_cron_jobs()
     matched = next(
@@ -1541,6 +1543,12 @@ def sync_routine_cron_job(routine):
     )
     cron_job_id = str((matched or {}).get("id") or existing_job_id or "")
     next_run_at = (matched or {}).get("nextRunAt") or (matched or {}).get("next_run_at")
+
+    if not cron_job_id:
+        raise RuntimeError(
+            "Routine cron sync completed without a persisted job id. "
+            f"OpenClaw output: {(command_output or '').strip() or 'no output'}"
+        )
 
     if cron_job_id:
         if routine.get("enabled"):
