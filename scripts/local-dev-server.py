@@ -463,6 +463,18 @@ def clear_agent_session_model_overrides(agent_id):
     return changed
 
 
+def reset_agent_session_store(agent_id):
+    store_path = resolve_agent_session_store_path(agent_id)
+    store = read_json_file(store_path, default={})
+    if not isinstance(store, dict):
+        store = {}
+
+    cleared = len(store)
+    if store_path.exists() or cleared:
+        write_json_file(store_path, {})
+    return cleared
+
+
 def b64url_encode(value):
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("utf-8")
 
@@ -953,6 +965,7 @@ def update_agent_metadata(agent_id, body):
             raise ValueError("model_primary must match an enabled provider/model in the catalog")
         updated["model_primary"] = model_primary or None
     runtime_changed = False
+    session_reset = None
     if "tools" in body:
         requested_tools = body.get("tools")
         if not isinstance(requested_tools, list):
@@ -978,10 +991,18 @@ def update_agent_metadata(agent_id, body):
     if runtime_changed:
         sync_agent_runtime_tools(agent_key, updated)
         sync_agent_runtime_model(agent_key, updated)
+    if "model_primary" in body:
         next_model_primary = str(updated.get("model_primary") or "").strip() or get_default_primary_model()
-        if next_model_primary != previous_model_primary:
-            clear_agent_session_model_overrides(agent_key)
-    return discover_openclaw_agents().get(agent_key), runtime_changed
+        cleared_overrides = clear_agent_session_model_overrides(agent_key)
+        cleared_sessions = reset_agent_session_store(agent_key)
+        session_reset = {
+            "requested": True,
+            "previous_model_primary": previous_model_primary,
+            "next_model_primary": next_model_primary,
+            "cleared_overrides": cleared_overrides,
+            "cleared_sessions": cleared_sessions,
+        }
+    return discover_openclaw_agents().get(agent_key), runtime_changed, session_reset
 
 
 def parse_bool(value):
@@ -3550,9 +3571,9 @@ class Handler(BaseHTTPRequestHandler):
             agent_id = path.rsplit("/", 1)[-1]
             body = self._parse_body()
             try:
-                agent, runtime_changed = update_agent_metadata(agent_id, body)
+                agent, runtime_changed, session_reset = update_agent_metadata(agent_id, body)
                 runtime = restart_openclaw_gateway("agent runtime update") if runtime_changed else None
-                return self._send_json(200, {"ok": True, "agent": agent, "runtime": runtime})
+                return self._send_json(200, {"ok": True, "agent": agent, "runtime": runtime, "session_reset": session_reset})
             except ValueError as exc:
                 message = str(exc)
                 status = 404 if message == "Agent not found." else 400
