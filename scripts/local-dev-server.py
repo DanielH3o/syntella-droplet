@@ -428,6 +428,41 @@ def delete_file(path):
         return
 
 
+def resolve_agent_session_store_path(agent_id):
+    agent_key = (agent_id or "").strip() or "main"
+    return OPENCLAW_STATE_DIR / "agents" / agent_key / "sessions" / "sessions.json"
+
+
+def clear_agent_session_model_overrides(agent_id):
+    store_path = resolve_agent_session_store_path(agent_id)
+    store = read_json_file(store_path, default={})
+    if not isinstance(store, dict) or not store:
+        return 0
+
+    changed = 0
+    for entry in store.values():
+        if not isinstance(entry, dict):
+            continue
+        entry_changed = False
+        for key in (
+            "providerOverride",
+            "modelOverride",
+            "authProfileOverride",
+            "authProfileOverrideSource",
+            "authProfileOverrideCompactionCount",
+        ):
+            if key in entry:
+                del entry[key]
+                entry_changed = True
+        if entry_changed:
+            entry["updatedAt"] = int(time.time() * 1000)
+            changed += 1
+
+    if changed:
+        write_json_file(store_path, store)
+    return changed
+
+
 def b64url_encode(value):
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode("utf-8")
 
@@ -880,6 +915,11 @@ def update_agent_metadata(agent_id, body):
         raise ValueError("Agent not found.")
 
     updated = dict(current) if isinstance(current, dict) else {}
+    previous_model_primary = (
+        str(updated.get("model_primary") or "").strip()
+        or str((discovered_agent or {}).get("model_primary") or "").strip()
+        or get_default_primary_model()
+    )
     if discovered_agent:
         updated.setdefault("role", discovered_agent.get("role"))
         updated.setdefault("description", discovered_agent.get("description"))
@@ -938,6 +978,9 @@ def update_agent_metadata(agent_id, body):
     if runtime_changed:
         sync_agent_runtime_tools(agent_key, updated)
         sync_agent_runtime_model(agent_key, updated)
+        next_model_primary = str(updated.get("model_primary") or "").strip() or get_default_primary_model()
+        if next_model_primary != previous_model_primary:
+            clear_agent_session_model_overrides(agent_key)
     return discover_openclaw_agents().get(agent_key), runtime_changed
 
 
