@@ -493,6 +493,33 @@ def gateway_is_listening():
         return False
 
 
+def read_gateway_token_value():
+    config = load_openclaw_config()
+    gateway = config.get("gateway")
+    auth = gateway.get("auth") if isinstance(gateway, dict) else None
+    token = auth.get("token") if isinstance(auth, dict) else ""
+    token = str(token or "").strip()
+    if token == "${OPENCLAW_GATEWAY_TOKEN}":
+        token = str(os.environ.get("OPENCLAW_GATEWAY_TOKEN") or "").strip()
+    return token
+
+
+def build_openclaw_runtime_env():
+    env = os.environ.copy()
+    path_parts = [
+        str(Path.home() / ".local" / "bin"),
+        str(Path.home() / ".npm-global" / "bin"),
+        env.get("PATH", ""),
+    ]
+    env["PATH"] = ":".join(part for part in path_parts if part)
+    env.setdefault("OPENCLAW_HOME", str(Path.home()))
+    if not env.get("OPENCLAW_GATEWAY_TOKEN"):
+        token = read_gateway_token_value()
+        if token:
+            env["OPENCLAW_GATEWAY_TOKEN"] = token
+    return env
+
+
 def stop_openclaw_gateway_processes(env):
     outputs = []
     for pattern in ("openclaw gateway", "openclaw-gateway"):
@@ -1232,7 +1259,7 @@ def extract_gateway_agent_primary_model(payload, agent_id="main"):
 
 
 def probe_gateway_agent_primary_model(agent_id="main", env=None):
-    runtime_env = dict(env or os.environ.copy())
+    runtime_env = dict(env or build_openclaw_runtime_env())
     result = subprocess.run(
         ["openclaw", "gateway", "call", "agents.list", "--params", "{}", "--json"],
         capture_output=True,
@@ -1252,8 +1279,7 @@ def probe_gateway_agent_primary_model(agent_id="main", env=None):
 
 
 def restart_openclaw_gateway(reason="runtime config update"):
-    env = os.environ.copy()
-    env["PATH"] = f"{Path.home() / '.npm-global' / 'bin'}:{env.get('PATH', '')}"
+    env = build_openclaw_runtime_env()
     OPENCLAW_GATEWAY_LOG.parent.mkdir(parents=True, exist_ok=True)
 
     details = {

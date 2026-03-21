@@ -73,13 +73,19 @@ append_path_if_missing() {
 }
 
 ensure_openclaw_on_path() {
+  local local_bin="$HOME/.local/bin"
   local npm_global_bin="$HOME/.npm-global/bin"
-  local path_line='export PATH="$HOME/.npm-global/bin:$PATH"'
+  local path_line='export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"'
 
   # Persist PATH fix for future non-interactive/login shells even if openclaw is currently found.
   append_path_if_missing "$HOME/.bashrc" "$path_line"
   append_path_if_missing "$HOME/.profile" "$path_line"
   append_path_if_missing "$HOME/.zshrc" "$path_line"
+
+  if [[ -d "$local_bin" ]] && [[ ":$PATH:" != *":$local_bin:"* ]]; then
+    export PATH="$local_bin:$PATH"
+    hash -r || true
+  fi
 
   if [[ -d "$npm_global_bin" ]] && [[ ":$PATH:" != *":$npm_global_bin:"* ]]; then
     export PATH="$npm_global_bin:$PATH"
@@ -92,13 +98,7 @@ ensure_openclaw_on_path() {
 resolve_openclaw_bin() {
   local candidate=""
 
-  candidate="$(command -v openclaw 2>/dev/null || true)"
-  if [[ -n "$candidate" && -x "$candidate" ]]; then
-    printf '%s\n' "$candidate"
-    return 0
-  fi
-
-  for candidate in "$HOME/.npm-global/bin/openclaw" "$HOME/.local/bin/openclaw" "/usr/local/bin/openclaw"; do
+  for candidate in "$HOME/.npm-global/bin/openclaw" "/usr/local/bin/openclaw" "$HOME/.local/bin/openclaw"; do
     if [[ -x "$candidate" ]]; then
       printf '%s\n' "$candidate"
       return 0
@@ -113,6 +113,12 @@ resolve_openclaw_bin() {
       printf '%s\n' "$candidate"
       return 0
     fi
+  fi
+
+  candidate="$(command -v openclaw 2>/dev/null || true)"
+  if [[ -n "$candidate" && -x "$candidate" ]]; then
+    printf '%s\n' "$candidate"
+    return 0
   fi
 
   return 1
@@ -484,13 +490,24 @@ fi
 NODE_BIN="$(command -v node || true)"
 OPENCLAW_MJS="$(readlink -f "$OPENCLAW_BIN" 2>/dev/null || realpath "$OPENCLAW_BIN" 2>/dev/null || echo "$OPENCLAW_BIN")"
 oc() { "$OPENCLAW_BIN" "$@"; }
+install_openclaw_cli_wrapper
 
 say "Pre-creating OpenClaw state dirs to avoid first-run prompts"
 mkdir -p "$HOME/.openclaw"
 chmod 700 "$HOME/.openclaw" || true
 mkdir -p "$HOME/.openclaw/agents/main/sessions"
+mkdir -p "$HOME/.openclaw/devices"
 mkdir -p "$HOME/.openclaw/credentials"
 mkdir -p "$HOME/.openclaw/workspace"
+chmod 700 "$HOME/.openclaw/devices" "$HOME/.openclaw/credentials" || true
+
+harden_openclaw_state_permissions() {
+  chmod 700 "$HOME/.openclaw" "$HOME/.openclaw/devices" "$HOME/.openclaw/credentials" 2>/dev/null || true
+  find "$HOME/.openclaw/devices" -maxdepth 1 -type f -exec chmod 600 {} \; 2>/dev/null || true
+  find "$HOME/.openclaw/credentials" -maxdepth 1 -type f -exec chmod 600 {} \; 2>/dev/null || true
+  find "$HOME/.openclaw/agents" -path '*/agent/auth-profiles.json' -exec chmod 600 {} \; 2>/dev/null || true
+  find "$HOME/.openclaw/agents" -path '*/agent/auth.json' -exec chmod 600 {} \; 2>/dev/null || true
+}
 
 ensure_gateway_token() {
   local config_file="$HOME/.openclaw/openclaw.json"
@@ -549,6 +566,104 @@ with open(config_path, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2, ensure_ascii=False)
     f.write("\n")
 PY
+}
+
+read_gateway_token() {
+  local config_file="$HOME/.openclaw/openclaw.json"
+
+  python3 - "$config_file" <<'PY'
+import json
+import os
+import sys
+
+config_path = sys.argv[1]
+cfg = {}
+if os.path.exists(config_path):
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+
+gateway = cfg.get("gateway")
+auth = gateway.get("auth") if isinstance(gateway, dict) else None
+token = auth.get("token") if isinstance(auth, dict) else ""
+if token == "${OPENCLAW_GATEWAY_TOKEN}":
+    token = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
+if token:
+    print(token)
+PY
+}
+
+install_openclaw_cli_wrapper() {
+  local real_bin="$OPENCLAW_BIN"
+  local wrapper_dir="$HOME/.local/bin"
+  local wrapper_path="$wrapper_dir/openclaw"
+
+  mkdir -p "$wrapper_dir"
+
+  cat >"$wrapper_path" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+REAL_BIN="${real_bin}"
+if [[ ! -x "\$REAL_BIN" ]]; then
+  echo "OpenClaw binary not found at \$REAL_BIN" >&2
+  exit 1
+fi
+
+if [[ -f /etc/openclaw/openclaw.env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source /etc/openclaw/openclaw.env
+  set +a
+fi
+
+if [[ -f "\$HOME/.openclaw/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "\$HOME/.openclaw/.env"
+  set +a
+fi
+
+export OPENCLAW_HOME="\${OPENCLAW_HOME:-\$HOME}"
+
+if [[ -z "\${OPENCLAW_GATEWAY_TOKEN:-}" && -f "\$OPENCLAW_HOME/.openclaw/openclaw.json" ]]; then
+  OPENCLAW_GATEWAY_TOKEN="\$(python3 - "\$OPENCLAW_HOME/.openclaw/openclaw.json" <<'PY'
+import json
+import os
+import sys
+
+config_path = sys.argv[1]
+cfg = {}
+if os.path.exists(config_path):
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        cfg = {}
+
+gateway = cfg.get("gateway")
+auth = gateway.get("auth") if isinstance(gateway, dict) else None
+token = auth.get("token") if isinstance(auth, dict) else ""
+if token == "\${OPENCLAW_GATEWAY_TOKEN}":
+    token = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
+if token:
+    print(token)
+PY
+)"
+  export OPENCLAW_GATEWAY_TOKEN
+fi
+
+exec "\$REAL_BIN" "\$@"
+EOF
+
+  chmod 755 "$wrapper_path"
+
+  if [[ ":$PATH:" != *":$wrapper_dir:"* ]]; then
+    export PATH="$wrapper_dir:$PATH"
+    hash -r || true
+  fi
 }
 
 parse_discord_target() {
@@ -783,6 +898,9 @@ seed_workspace_context_files() {
 setup_openclaw_env_file() {
   local env_dir="/etc/openclaw"
   local env_file="${env_dir}/openclaw.env"
+  local gateway_token
+
+  gateway_token="$(read_gateway_token)"
 
   if ! getent group openclaw >/dev/null 2>&1; then
     sudo groupadd --system openclaw >/dev/null 2>&1 || true
@@ -794,6 +912,7 @@ setup_openclaw_env_file() {
 MOONSHOT_API_KEY="${MOONSHOT_API_KEY}"
 OPENAI_API_KEY="${OPENAI_API_KEY}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
+OPENCLAW_GATEWAY_TOKEN="${gateway_token}"
 OPENCLAW_HOME="${HOME}"
 SYNTELLA_PORTAL_API_TOKEN="${SYNTELLA_PORTAL_API_TOKEN}"
 SYNTELLA_ENABLE_DROPLET_FRONTEND="${SYNTELLA_ENABLE_DROPLET_FRONTEND}"
@@ -815,6 +934,8 @@ EOF
 
 setup_openclaw_global_dotenv() {
   local dotenv_file="$HOME/.openclaw/.env"
+  local gateway_token
+  gateway_token="$(read_gateway_token)"
   mkdir -p "$HOME/.openclaw"
   cat >"$dotenv_file" <<EOF
 # OpenClaw daemon-level environment fallback.
@@ -822,6 +943,7 @@ setup_openclaw_global_dotenv() {
 MOONSHOT_API_KEY="${MOONSHOT_API_KEY}"
 OPENAI_API_KEY="${OPENAI_API_KEY}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
+OPENCLAW_GATEWAY_TOKEN="${gateway_token}"
 EOF
   chmod 600 "$dotenv_file"
 }
@@ -1297,6 +1419,8 @@ PY
 }
 
 configure_openclaw_runtime() {
+  harden_openclaw_state_permissions
+
   if should_preserve_state; then
     say "Writing workspace root context files (preserve customer state mode)"
   else
@@ -1661,6 +1785,34 @@ start_gateway() {
   return 1
 }
 
+ensure_local_cli_gateway_access() {
+  local repair_output=""
+
+  if oc devices list --json >/dev/null 2>&1; then
+    echo "Local OpenClaw CLI pairing is healthy."
+    return 0
+  fi
+
+  echo "Attempting to repair local OpenClaw CLI pairing..."
+
+  # Trigger a local client connect so the gateway can create a pending request if needed.
+  oc status >/dev/null 2>&1 || true
+
+  repair_output="$(oc devices approve --latest --json 2>&1 || true)"
+
+  if oc devices list --json >/dev/null 2>&1; then
+    echo "Local OpenClaw CLI pairing repaired."
+    return 0
+  fi
+
+  echo "Warning: local OpenClaw CLI pairing is still unavailable."
+  if [[ -n "$repair_output" ]]; then
+    echo "$repair_output"
+  fi
+  echo "Try manually: openclaw devices approve --latest"
+  return 1
+}
+
 print_summary() {
   echo
   echo "----------------------------------------"
@@ -1712,6 +1864,8 @@ main() {
   say "Checking gateway health"
   if is_gateway_listening; then
     echo "Gateway is listening on port 18789"
+    ensure_local_cli_gateway_access || true
+    harden_openclaw_state_permissions
     say "Sending Discord startup ping"
     send_discord_boot_ping || true
   else
