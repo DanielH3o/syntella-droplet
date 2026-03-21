@@ -470,10 +470,30 @@ def reset_agent_session_store(agent_id):
     if not isinstance(store, dict):
         store = {}
 
-    cleared = len(store)
+    removed_keys = [str(key) for key in store.keys()]
+    removed_session_ids = []
+    for entry in store.values():
+        if isinstance(entry, dict):
+            session_id = str(entry.get("sessionId") or "").strip()
+            if session_id:
+                removed_session_ids.append(session_id)
+
+    cleared = len(removed_keys)
     if store_path.exists() or cleared:
         write_json_file(store_path, {})
-    return cleared
+    return {
+        "cleared_sessions": cleared,
+        "removed_session_keys": removed_keys,
+        "removed_session_ids": removed_session_ids,
+    }
+
+
+def reset_agent_session_state(agent_id):
+    cleared_overrides = clear_agent_session_model_overrides(agent_id)
+    state = reset_agent_session_store(agent_id)
+    state["cleared_overrides"] = cleared_overrides
+    state["preserved_transcripts"] = True
+    return state
 
 
 def b64url_encode(value):
@@ -1057,14 +1077,11 @@ def update_agent_metadata(agent_id, body):
         sync_agent_runtime_model(agent_key, updated)
     if "model_primary" in body:
         next_model_primary = str(updated.get("model_primary") or "").strip() or get_default_primary_model()
-        cleared_overrides = clear_agent_session_model_overrides(agent_key)
-        cleared_sessions = reset_agent_session_store(agent_key)
         session_reset = {
             "requested": True,
             "previous_model_primary": previous_model_primary,
             "next_model_primary": next_model_primary,
-            "cleared_overrides": cleared_overrides,
-            "cleared_sessions": cleared_sessions,
+            "agent_id": agent_key,
         }
     return discover_openclaw_agents().get(agent_key), runtime_changed, session_reset
 
@@ -3707,6 +3724,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 agent, runtime_changed, session_reset = update_agent_metadata(agent_id, body)
                 runtime = restart_openclaw_gateway("agent runtime update") if runtime_changed else None
+                if session_reset and session_reset.get("requested"):
+                    agent_key = session_reset.get("agent_id") or agent_id
+                    session_reset.update(reset_agent_session_state(agent_key))
                 return self._send_json(200, {"ok": True, "agent": agent, "runtime": runtime, "session_reset": session_reset})
             except ValueError as exc:
                 message = str(exc)
