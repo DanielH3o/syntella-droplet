@@ -501,6 +501,7 @@ def discover_openclaw_agents():
     integrations = list_integrations()
     config, _ = ensure_seed_model_catalog(write_back=True)
     runtime_tools = {}
+    runtime_models = {}
     agents_cfg = config.get("agents")
     entries = agents_cfg.get("list") if isinstance(agents_cfg, dict) else None
     if isinstance(entries, list):
@@ -510,8 +511,12 @@ def discover_openclaw_agents():
             agent_id = (entry.get("id") or "").strip()
             tools_cfg = entry.get("tools")
             allow = tools_cfg.get("allow") if isinstance(tools_cfg, dict) else None
+            model_cfg = entry.get("model")
+            model_primary = model_cfg.get("primary") if isinstance(model_cfg, dict) else None
             if agent_id and isinstance(allow, list):
                 runtime_tools[agent_id] = [str(item).strip() for item in allow if str(item).strip()]
+            if agent_id and isinstance(model_primary, str) and model_primary.strip():
+                runtime_models[agent_id] = model_primary.strip()
     agents_root = OPENCLAW_STATE_DIR / "agents"
 
     if agents_root.exists():
@@ -566,6 +571,7 @@ def discover_openclaw_agents():
             "monthly_budget": parse_optional_number(registry_meta.get("monthly_budget"), float),
             "specialty": registry_meta.get("specialty"),
             "tools": registry_meta.get("tools") if isinstance(registry_meta.get("tools"), list) else runtime_tools.get(agent_id) or derive_default_agent_tools(registry_meta.get("specialty"), integrations),
+            "model_primary": registry_meta.get("model_primary") if isinstance(registry_meta.get("model_primary"), str) and registry_meta.get("model_primary").strip() else runtime_models.get(agent_id) or get_default_primary_model(),
             "available_tools": available_tool_descriptors(integrations),
             "status": "Running" if is_running or latest_ts else "Discovered",
             "latest_activity": latest_ts,
@@ -880,6 +886,7 @@ def update_agent_metadata(agent_id, body):
         updated.setdefault("port", discovered_agent.get("port"))
         updated.setdefault("channel_id", discovered_agent.get("channel_id"))
         updated.setdefault("specialty", discovered_agent.get("specialty"))
+        updated.setdefault("model_primary", discovered_agent.get("model_primary"))
     if "role" in body:
         updated["role"] = (body.get("role") or "").strip()
     if "description" in body:
@@ -899,6 +906,11 @@ def update_agent_metadata(agent_id, body):
         if specialty not in {None, "seo"}:
             raise ValueError("specialty must be empty or seo")
         updated["specialty"] = specialty
+    if "model_primary" in body:
+        model_primary = (body.get("model_primary") or "").strip()
+        if model_primary and not is_known_primary_model(model_primary):
+            raise ValueError("model_primary must match an enabled provider/model in the catalog")
+        updated["model_primary"] = model_primary or None
     runtime_changed = False
     if "tools" in body:
         requested_tools = body.get("tools")
@@ -917,11 +929,14 @@ def update_agent_metadata(agent_id, body):
         runtime_changed = True
     if "specialty" in body:
         runtime_changed = True
+    if "model_primary" in body:
+        runtime_changed = True
 
     registry[agent_key] = updated
     write_registry(registry)
     if runtime_changed:
         sync_agent_runtime_tools(agent_key, updated)
+        sync_agent_runtime_model(agent_key, updated)
     return discover_openclaw_agents().get(agent_key), runtime_changed
 
 
@@ -933,6 +948,22 @@ def parse_bool(value):
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on"}
     return False
+
+
+def is_known_primary_model(model_primary):
+    value = str(model_primary or "").strip()
+    if not value or "/" not in value:
+        return False
+    config, _ = ensure_seed_model_catalog(write_back=True)
+    providers = config.get("models", {}).get("providers", {})
+    if not isinstance(providers, dict):
+        return False
+    provider_name, model_id = value.split("/", 1)
+    provider_cfg = providers.get(provider_name)
+    provider_models = provider_cfg.get("models") if isinstance(provider_cfg, dict) else None
+    if not isinstance(provider_models, list):
+        return False
+    return any(isinstance(model, dict) and str(model.get("id") or "").strip() == model_id for model in provider_models)
 
 
 def parse_optional_number(value, cast_type=float):
@@ -2176,6 +2207,31 @@ def sync_agent_runtime_tools(agent_id, agent_meta, integrations=None):
 
     tools_cfg["allow"] = list(dict.fromkeys(tool_names))
     target_entry["tools"] = tools_cfg
+    write_openclaw_config(config)
+    return True
+
+
+def sync_agent_runtime_model(agent_id, agent_meta):
+    config, _ = ensure_seed_model_catalog(write_back=True)
+    agents_cfg = config.get("agents")
+    entries = agents_cfg.get("list") if isinstance(agents_cfg, dict) else None
+    if not isinstance(entries, list):
+        return False
+
+    target_entry = None
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("id") == agent_id:
+            target_entry = entry
+            break
+    if target_entry is None:
+        return False
+
+    model_primary = str(agent_meta.get("model_primary") or "").strip() or get_default_primary_model()
+    model_cfg = target_entry.get("model")
+    if not isinstance(model_cfg, dict):
+        model_cfg = {}
+    model_cfg["primary"] = model_primary
+    target_entry["model"] = model_cfg
     write_openclaw_config(config)
     return True
 
