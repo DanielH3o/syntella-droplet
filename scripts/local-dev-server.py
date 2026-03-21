@@ -494,7 +494,7 @@ def gateway_is_listening():
 
 
 def read_gateway_token_value():
-    config = load_openclaw_config()
+    config = read_openclaw_config()
     gateway = config.get("gateway")
     auth = gateway.get("auth") if isinstance(gateway, dict) else None
     token = auth.get("token") if isinstance(auth, dict) else ""
