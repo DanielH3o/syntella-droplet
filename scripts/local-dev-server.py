@@ -9,6 +9,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import shutil
 import base64
 import hashlib
 import secrets
@@ -490,6 +491,42 @@ def gateway_is_listening():
             return True
     except OSError:
         return False
+
+
+def stop_openclaw_gateway_processes(env):
+    outputs = []
+    for pattern in ("openclaw gateway", "openclaw-gateway"):
+        try:
+            result = subprocess.run(
+                ["pkill", "-f", pattern],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=env,
+            )
+            text = (result.stdout or result.stderr or "").strip()
+            if text:
+                outputs.append(f"{pattern}: {text}")
+        except Exception as exc:
+            outputs.append(f"{pattern}: {exc}")
+
+    if shutil.which("lsof"):
+        try:
+            listeners = subprocess.run(
+                ["lsof", "-tiTCP:%s" % OPENCLAW_GATEWAY_PORT, "-sTCP:LISTEN"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=env,
+            )
+            pids = [line.strip() for line in (listeners.stdout or "").splitlines() if line.strip()]
+            for pid in pids:
+                subprocess.run(["kill", pid], capture_output=True, text=True, timeout=10, env=env)
+            if pids:
+                outputs.append(f"port:{OPENCLAW_GATEWAY_PORT} killed {' '.join(pids)}")
+        except Exception as exc:
+            outputs.append(f"port:{OPENCLAW_GATEWAY_PORT}: {exc}")
+    return " | ".join(outputs).strip()
 
 
 def read_operator_bridge_token():
@@ -1266,17 +1303,7 @@ def restart_openclaw_gateway(reason="runtime config update"):
     except Exception as exc:
         details["stop_output"] = str(exc)
 
-    try:
-        pkill_result = subprocess.run(
-            ["pkill", "-f", "openclaw gateway"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=env,
-        )
-        details["pkill_output"] = (pkill_result.stdout or pkill_result.stderr or "").strip()
-    except Exception as exc:
-        details["pkill_output"] = str(exc)
+    details["pkill_output"] = stop_openclaw_gateway_processes(env)
 
     time.sleep(1)
 

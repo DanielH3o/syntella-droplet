@@ -1604,7 +1604,21 @@ is_gateway_listening() {
   # Best-effort active connect test (bash built-in)
   (echo >/dev/tcp/127.0.0.1/18789) >/dev/null 2>&1 && return 0
 
-  pgrep -f "openclaw gateway" >/dev/null 2>&1
+  pgrep -f "openclaw gateway|openclaw-gateway" >/dev/null 2>&1
+}
+
+stop_gateway_processes() {
+  pkill -f "openclaw gateway" >/dev/null 2>&1 || true
+  pkill -f "openclaw-gateway" >/dev/null 2>&1 || true
+
+  if command -v lsof >/dev/null 2>&1; then
+    local pids
+    pids="$(lsof -tiTCP:18789 -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ -n "$pids" ]]; then
+      # shellcheck disable=SC2086
+      kill $pids >/dev/null 2>&1 || true
+    fi
+  fi
 }
 
 start_gateway() {
@@ -1613,7 +1627,7 @@ start_gateway() {
 
   # Always restart to pick up any config changes applied before this call.
   oc gateway stop >/dev/null 2>&1 || true
-  pkill -f "openclaw gateway" >/dev/null 2>&1 || true
+  stop_gateway_processes
   sleep 1
 
   # Remove stale lock files
@@ -1643,7 +1657,7 @@ start_gateway() {
   echo "Resolved openclaw entrypoint: $OPENCLAW_MJS"
   echo "Resolved node binary: ${NODE_BIN:-<not-found>}"
   ls -l "$OPENCLAW_BIN" 2>/dev/null || true
-  pgrep -af "openclaw gateway" || true
+  pgrep -af "openclaw gateway|openclaw-gateway" || true
   return 1
 }
 
