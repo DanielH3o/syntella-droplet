@@ -9,6 +9,9 @@ import sqlite3
 import subprocess
 import sys
 import time
+import base64
+import hashlib
+import secrets
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -16,7 +19,7 @@ from socketserver import ThreadingMixIn
 from zoneinfo import ZoneInfo
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 PORT = int(os.environ.get("SYNTELLA_DEV_PORT", "3000"))
 BIND_HOST = os.environ.get("SYNTELLA_API_BIND_HOST", "127.0.0.1").strip() or "127.0.0.1"
@@ -27,6 +30,7 @@ OPENCLAW_STATE_DIR = Path(
 OPENCLAW_CONFIG = OPENCLAW_STATE_DIR / "openclaw.json"
 DEFAULT_MODEL_CATALOG = Path(__file__).resolve().parent.parent / "config" / "default-model-catalog.json"
 OPENCLAW_CRON_JOBS = OPENCLAW_STATE_DIR / "cron" / "jobs.json"
+OPENCLAW_RUNTIME_DIR = OPENCLAW_STATE_DIR / "runtime"
 OPERATOR_BRIDGE_ENV = Path("/etc/openclaw/operator-bridge.env")
 OPERATOR_BRIDGE_URL = os.environ.get("SYNTELLA_OPERATOR_BRIDGE_URL", "http://127.0.0.1:8787")
 DB_PATH = WORKSPACE / "tasks.db"
@@ -93,6 +97,15 @@ PROVIDER_ENV_KEYS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "moonshot": "MOONSHOT_API_KEY",
 }
+OAUTH_PROFILE_ID = "openai-codex:default"
+OPENAI_CODEX_PROVIDER = "openai-codex"
+OPENAI_CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
+OPENAI_CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
+OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+OPENAI_CODEX_REDIRECT_URI = "http://localhost:1455/auth/callback"
+OPENAI_CODEX_SCOPE = "openid profile email offline_access"
+OPENAI_CODEX_JWT_CLAIM_PATH = "https://api.openai.com/auth"
+OPENAI_CODEX_OAUTH_SESSION = OPENCLAW_RUNTIME_DIR / "openai-codex-oauth.json"
 
 
 def utc_now_iso():
@@ -390,6 +403,39 @@ def write_openclaw_config(data):
         handle.write("\n")
 
 
+def read_json_file(path, default=None):
+    fallback = default if default is not None else {}
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return payload if isinstance(payload, type(fallback)) else fallback
+    except (OSError, json.JSONDecodeError):
+        return fallback
+
+
+def write_json_file(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+        handle.write("\n")
+
+
+def delete_file(path):
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+
+
+def b64url_encode(value):
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("utf-8")
+
+
+def b64url_decode(value):
+    padding = "=" * ((4 - len(value) % 4) % 4)
+    return base64.urlsafe_b64decode(f"{value}{padding}")
+
+
 def gateway_is_listening():
     try:
         with socket.create_connection(("127.0.0.1", OPENCLAW_GATEWAY_PORT), timeout=1):
@@ -526,6 +572,292 @@ def discover_openclaw_agents():
             "session_count": event_count,
         }
     return discovered
+
+
+def openclaw_agent_state_dirs():
+    agents_root = OPENCLAW_STATE_DIR / "agents"
+    discovered = []
+    if agents_root.exists():
+        for agent_dir in sorted(path for path in agents_root.iterdir() if path.is_dir()):
+            discovered.append(agent_dir / "agent")
+
+    main_dir = agents_root / "main" / "agent"
+    if main_dir not in discovered:
+        discovered.insert(0, main_dir)
+
+    seen = []
+    for path in discovered:
+        if path not in seen:
+            seen.append(path)
+    return seen
+
+
+def read_openai_codex_oauth_session():
+    session = read_json_file(OPENAI_CODEX_OAUTH_SESSION, default={})
+    return session if isinstance(session, dict) else {}
+
+
+def clear_openai_codex_oauth_session():
+    delete_file(OPENAI_CODEX_OAUTH_SESSION)
+
+
+def create_openai_codex_pkce():
+    verifier = b64url_encode(secrets.token_bytes(64))
+    challenge = b64url_encode(hashlib.sha256(verifier.encode("utf-8")).digest())
+    state = b64url_encode(secrets.token_bytes(24))
+    return verifier, challenge, state
+
+
+def parse_openai_codex_callback(body):
+    callback_url = (
+        body.get("callback_url")
+        or body.get("redirect_url")
+        or body.get("callback_uri")
+        or ""
+    )
+    callback_url = str(callback_url or "").strip()
+    code = str(body.get("code") or "").strip()
+    state = str(body.get("state") or "").strip()
+
+    if callback_url:
+        parsed = urlparse(callback_url)
+        query = parse_qs(parsed.query)
+        fragment = parse_qs(parsed.fragment)
+        code = code or str((query.get("code") or fragment.get("code") or [""])[0]).strip()
+        state = state or str((query.get("state") or fragment.get("state") or [""])[0]).strip()
+        error = str((query.get("error") or fragment.get("error") or [""])[0]).strip()
+        if error:
+            description = str(
+                (query.get("error_description") or fragment.get("error_description") or [""])[0]
+            ).strip()
+            raise ValueError(description or error)
+
+    if not code:
+        raise ValueError("Paste the full callback URL after approving access.")
+    if not state:
+        raise ValueError("The callback URL is missing the OAuth state.")
+
+    return code, state
+
+
+def exchange_openai_codex_code(code, verifier):
+    payload = urlencode(
+        {
+            "grant_type": "authorization_code",
+            "client_id": OPENAI_CODEX_CLIENT_ID,
+            "code": code,
+            "code_verifier": verifier,
+            "redirect_uri": OPENAI_CODEX_REDIRECT_URI,
+        }
+    ).encode("utf-8")
+    request = Request(
+        OPENAI_CODEX_TOKEN_URL,
+        data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=20) as response:
+            raw = response.read().decode("utf-8")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8").strip()
+        raise RuntimeError(detail or "OpenAI Codex token exchange failed.") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Could not reach OpenAI auth: {exc.reason}") from exc
+
+    try:
+        token_payload = json.loads(raw) if raw else {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("OpenAI Codex returned malformed JSON.") from exc
+
+    if not token_payload.get("access_token") or not token_payload.get("refresh_token"):
+        raise RuntimeError("OpenAI Codex did not return the expected OAuth tokens.")
+
+    expires_in = int(token_payload.get("expires_in") or 0)
+    expires = int(time.time() * 1000) + max(expires_in, 0) * 1000
+    return {
+        "access": str(token_payload.get("access_token") or ""),
+        "refresh": str(token_payload.get("refresh_token") or ""),
+        "expires": expires,
+    }
+
+
+def extract_openai_codex_account_id(access_token):
+    try:
+        parts = str(access_token or "").split(".")
+        if len(parts) < 2:
+            return None
+        payload = json.loads(b64url_decode(parts[1]))
+        auth = payload.get(OPENAI_CODEX_JWT_CLAIM_PATH) if isinstance(payload, dict) else None
+        account_id = auth.get("chatgpt_account_id") if isinstance(auth, dict) else None
+        return account_id if isinstance(account_id, str) and account_id else None
+    except Exception:
+        return None
+
+
+def ensure_openclaw_oauth_profile(provider=OPENAI_CODEX_PROVIDER, profile_id=OAUTH_PROFILE_ID):
+    config = read_openclaw_config()
+    auth_cfg = config.setdefault("auth", {})
+    profiles_cfg = auth_cfg.setdefault("profiles", {})
+    desired = {"provider": provider, "mode": "oauth"}
+    if profiles_cfg.get(profile_id) != desired:
+        profiles_cfg[profile_id] = desired
+        write_openclaw_config(config)
+
+
+def remove_openclaw_oauth_profile(profile_id=OAUTH_PROFILE_ID):
+    config = read_openclaw_config()
+    auth_cfg = config.get("auth")
+    if not isinstance(auth_cfg, dict):
+        return
+    profiles_cfg = auth_cfg.get("profiles")
+    if not isinstance(profiles_cfg, dict):
+        return
+    if profile_id in profiles_cfg:
+        del profiles_cfg[profile_id]
+        write_openclaw_config(config)
+
+
+def write_openai_codex_credentials(creds):
+    ensure_openclaw_oauth_profile()
+    for agent_dir in openclaw_agent_state_dirs():
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        profiles_path = agent_dir / "auth-profiles.json"
+        auth_path = agent_dir / "auth.json"
+
+        profiles_payload = read_json_file(
+            profiles_path,
+            default={"version": 1, "profiles": {}, "lastGood": {}, "usageStats": {}},
+        )
+        if not isinstance(profiles_payload.get("profiles"), dict):
+            profiles_payload["profiles"] = {}
+        if not isinstance(profiles_payload.get("lastGood"), dict):
+            profiles_payload["lastGood"] = {}
+        if not isinstance(profiles_payload.get("usageStats"), dict):
+            profiles_payload["usageStats"] = {}
+        profiles_payload["version"] = 1
+        profiles_payload["profiles"][OAUTH_PROFILE_ID] = {
+            "type": "oauth",
+            "provider": OPENAI_CODEX_PROVIDER,
+            "access": creds["access"],
+            "refresh": creds["refresh"],
+            "expires": int(creds["expires"]),
+            "accountId": creds.get("accountId"),
+        }
+        profiles_payload["lastGood"][OPENAI_CODEX_PROVIDER] = OAUTH_PROFILE_ID
+        usage_stats = profiles_payload["usageStats"].get(OAUTH_PROFILE_ID)
+        if not isinstance(usage_stats, dict):
+            usage_stats = {}
+        usage_stats.setdefault("errorCount", 0)
+        usage_stats["lastUsed"] = utc_now_iso()
+        usage_stats.setdefault("lastFailureAt", None)
+        profiles_payload["usageStats"][OAUTH_PROFILE_ID] = usage_stats
+        write_json_file(profiles_path, profiles_payload)
+
+        auth_payload = read_json_file(auth_path, default={})
+        if not isinstance(auth_payload, dict):
+            auth_payload = {}
+        auth_payload[OPENAI_CODEX_PROVIDER] = {
+            "type": "oauth",
+            "access": creds["access"],
+            "refresh": creds["refresh"],
+            "expires": int(creds["expires"]),
+        }
+        write_json_file(auth_path, auth_payload)
+
+
+def remove_openai_codex_credentials():
+    for agent_dir in openclaw_agent_state_dirs():
+        profiles_path = agent_dir / "auth-profiles.json"
+        auth_path = agent_dir / "auth.json"
+
+        profiles_payload = read_json_file(profiles_path, default={})
+        changed_profiles = False
+        if isinstance(profiles_payload.get("profiles"), dict) and OAUTH_PROFILE_ID in profiles_payload["profiles"]:
+            del profiles_payload["profiles"][OAUTH_PROFILE_ID]
+            changed_profiles = True
+        if isinstance(profiles_payload.get("lastGood"), dict) and OPENAI_CODEX_PROVIDER in profiles_payload["lastGood"]:
+            del profiles_payload["lastGood"][OPENAI_CODEX_PROVIDER]
+            changed_profiles = True
+        if isinstance(profiles_payload.get("usageStats"), dict) and OAUTH_PROFILE_ID in profiles_payload["usageStats"]:
+            del profiles_payload["usageStats"][OAUTH_PROFILE_ID]
+            changed_profiles = True
+        if changed_profiles:
+            if not profiles_payload.get("profiles"):
+                profiles_payload.setdefault("profiles", {})
+            profiles_payload["version"] = 1
+            write_json_file(profiles_path, profiles_payload)
+
+        auth_payload = read_json_file(auth_path, default={})
+        if isinstance(auth_payload, dict) and OPENAI_CODEX_PROVIDER in auth_payload:
+            del auth_payload[OPENAI_CODEX_PROVIDER]
+            write_json_file(auth_path, auth_payload)
+
+    remove_openclaw_oauth_profile()
+    clear_openai_codex_oauth_session()
+
+
+def get_openai_codex_auth_status():
+    session = read_openai_codex_oauth_session()
+    connected = False
+    profile_id = None
+    account_id = None
+    expires = None
+
+    for agent_dir in openclaw_agent_state_dirs():
+        payload = read_json_file(agent_dir / "auth-profiles.json", default={})
+        profiles = payload.get("profiles")
+        profile = profiles.get(OAUTH_PROFILE_ID) if isinstance(profiles, dict) else None
+        if isinstance(profile, dict):
+            connected = True
+            profile_id = OAUTH_PROFILE_ID
+            account_id = profile.get("accountId") or account_id
+            expires = profile.get("expires") or expires
+            break
+
+    return {
+        "connected": connected,
+        "pending": bool(session.get("state")),
+        "profile_id": profile_id,
+        "account_id": account_id,
+        "expires": expires,
+        "started_at": session.get("createdAt"),
+        "authorize_url": session.get("authorizeUrl"),
+        "redirect_uri": OPENAI_CODEX_REDIRECT_URI,
+    }
+
+
+def start_openai_codex_auth():
+    verifier, challenge, state = create_openai_codex_pkce()
+    authorize_url = f"{OPENAI_CODEX_AUTHORIZE_URL}?{urlencode({'response_type': 'code', 'client_id': OPENAI_CODEX_CLIENT_ID, 'redirect_uri': OPENAI_CODEX_REDIRECT_URI, 'scope': OPENAI_CODEX_SCOPE, 'code_challenge': challenge, 'code_challenge_method': 'S256', 'state': state})}"
+    session = {
+        "provider": OPENAI_CODEX_PROVIDER,
+        "state": state,
+        "verifier": verifier,
+        "createdAt": utc_now_iso(),
+        "authorizeUrl": authorize_url,
+        "redirectUri": OPENAI_CODEX_REDIRECT_URI,
+    }
+    write_json_file(OPENAI_CODEX_OAUTH_SESSION, session)
+    return get_openai_codex_auth_status()
+
+
+def complete_openai_codex_auth(body):
+    session = read_openai_codex_oauth_session()
+    expected_state = str(session.get("state") or "").strip()
+    verifier = str(session.get("verifier") or "").strip()
+    if not expected_state or not verifier:
+        raise ValueError("Start the Codex connection flow before submitting the callback URL.")
+
+    code, state = parse_openai_codex_callback(body)
+    if state != expected_state:
+        raise ValueError("The callback URL does not match the active Codex connection request.")
+
+    creds = exchange_openai_codex_code(code, verifier)
+    creds["accountId"] = extract_openai_codex_account_id(creds.get("access"))
+    write_openai_codex_credentials(creds)
+    clear_openai_codex_oauth_session()
+    return get_openai_codex_auth_status()
 
 
 def update_agent_metadata(agent_id, body):
@@ -1023,6 +1355,8 @@ def ensure_seed_model_catalog(config=None, write_back=False):
             ("description", "description"),
             ("baseUrl", "baseUrl"),
             ("api", "api"),
+            ("authType", "authType"),
+            ("connectLabel", "connectLabel"),
         ):
             value = provider_defaults.get(default_key)
             if value and not provider_cfg.get(config_key):
@@ -1128,6 +1462,8 @@ def list_model_providers():
             provider_cfg = {}
         default_meta = provider_defaults.get(provider_name) if isinstance(provider_defaults.get(provider_name), dict) else {}
         provider_models = models_by_provider.get(provider_name, [])
+        auth_type = str(provider_cfg.get("authType") or default_meta.get("authType") or "api_key").strip() or "api_key"
+        oauth_status = get_openai_codex_auth_status() if provider_name == OPENAI_CODEX_PROVIDER else {}
         default_model = ""
         if current_primary.startswith(f"{provider_name}/"):
             default_model = current_primary
@@ -1140,12 +1476,22 @@ def list_model_providers():
             "provider_base_url": provider_cfg.get("baseUrl") or default_meta.get("baseUrl") or "",
             "provider_api_adapter": provider_cfg.get("api") or default_meta.get("api") or "",
             "provider_has_api_key": bool(provider_cfg.get("apiKey")),
+            "auth_type": auth_type,
+            "connect_label": provider_cfg.get("connectLabel") or default_meta.get("connectLabel") or "",
             "env_key": default_meta.get("envKey") or PROVIDER_ENV_KEYS.get(provider_name) or "",
             "model_count": len(provider_models),
             "enabled_model_count": len([model for model in provider_models if model.get("enabled")]),
             "reasoning_model_count": len([model for model in provider_models if model.get("reasoning")]),
             "pricing_complete_count": len([model for model in provider_models if model.get("pricing_complete")]),
             "default_model": default_model,
+            "oauth_connected": bool(oauth_status.get("connected")),
+            "oauth_pending": bool(oauth_status.get("pending")),
+            "oauth_profile_id": oauth_status.get("profile_id"),
+            "oauth_account_id": oauth_status.get("account_id"),
+            "oauth_expires": oauth_status.get("expires"),
+            "oauth_started_at": oauth_status.get("started_at"),
+            "oauth_authorize_url": oauth_status.get("authorize_url"),
+            "oauth_redirect_uri": oauth_status.get("redirect_uri"),
             "models": [
                 {
                     "provider": model.get("provider"),
@@ -2781,6 +3127,18 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
 
+        if path == "/api/models/auth/status":
+            return self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "providers": list_model_providers(),
+                    "status": {
+                        OPENAI_CODEX_PROVIDER: get_openai_codex_auth_status(),
+                    },
+                },
+            )
+
         if path == "/api/integrations":
             return self._send_json(200, {"ok": True, "integrations": list_integrations()})
 
@@ -2897,6 +3255,41 @@ class Handler(BaseHTTPRequestHandler):
                         "providers": list_model_providers(),
                         "models": list_models(),
                         "runtime": runtime,
+                    },
+                )
+            except ValueError as exc:
+                return self._send_json(400, {"ok": False, "error": str(exc)})
+            except Exception as exc:
+                return self._send_json(500, {"ok": False, "error": str(exc)})
+
+        if path == "/api/models/auth/openai-codex/start":
+            try:
+                status = start_openai_codex_auth()
+                return self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "provider": OPENAI_CODEX_PROVIDER,
+                        "auth": status,
+                        "providers": list_model_providers(),
+                        "models": list_models(),
+                    },
+                )
+            except Exception as exc:
+                return self._send_json(500, {"ok": False, "error": str(exc)})
+
+        if path == "/api/models/auth/openai-codex/complete":
+            body = self._parse_body()
+            try:
+                status = complete_openai_codex_auth(body)
+                return self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "provider": OPENAI_CODEX_PROVIDER,
+                        "auth": status,
+                        "providers": list_model_providers(),
+                        "models": list_models(),
                     },
                 )
             except ValueError as exc:
@@ -3068,6 +3461,21 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path.startswith("/api/") and not self._require_api_auth():
             return
+        if path == "/api/models/auth/openai-codex":
+            try:
+                remove_openai_codex_credentials()
+                return self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "provider": OPENAI_CODEX_PROVIDER,
+                        "auth": get_openai_codex_auth_status(),
+                        "providers": list_model_providers(),
+                        "models": list_models(),
+                    },
+                )
+            except Exception as exc:
+                return self._send_json(500, {"ok": False, "error": str(exc)})
         if path == "/api/models/overrides":
             body = self._parse_body()
             provider = (body.get("provider") or "").strip()
