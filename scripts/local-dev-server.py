@@ -2904,6 +2904,23 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return self._send_json(500, {"ok": False, "error": str(exc)})
 
+        if path == "/api/models/catalog/refresh":
+            try:
+                ensure_seed_model_catalog(write_back=True)
+                runtime = restart_openclaw_gateway("model catalog refresh")
+                return self._send_json(
+                    200,
+                    {
+                        "ok": True,
+                        "default_primary_model": get_default_primary_model(),
+                        "providers": list_model_providers(),
+                        "models": list_models(),
+                        "runtime": runtime,
+                    },
+                )
+            except Exception as exc:
+                return self._send_json(500, {"ok": False, "error": str(exc)})
+
         if path == "/api/runtime/reload":
             try:
                 runtime = restart_openclaw_gateway("manual runtime reload")

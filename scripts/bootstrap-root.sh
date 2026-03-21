@@ -15,7 +15,7 @@ set -euo pipefail
 #   export OPENAI_API_KEY="..."
 #   export ANTHROPIC_API_KEY="..."
 #   export MOONSHOT_API_KEY="..."
-#   export FRONTEND_ENABLED=0   # skip nginx placeholder frontend
+#   export FRONTEND_ENABLED=1   # optional legacy nginx workspace frontend (default is disabled)
 #   export EXEC_APPROVAL_MODE=strict   # keep interactive exec approvals (default is full)
 #   export TS_ACCEPT_DNS=true
 #   export TS_LOGIN_SERVER="https://controlplane.tailscale.com"

@@ -33,7 +33,7 @@ OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 DISCORD_GUILD_ID=""
 DISCORD_CHANNEL_ID=""
-FRONTEND_ENABLED="${FRONTEND_ENABLED:-1}"
+FRONTEND_ENABLED="${FRONTEND_ENABLED:-0}"
 FRONTEND_URL=""
 # Lock frontend to this source IP/CIDR (required when FRONTEND_ENABLED=1), e.g. "203.0.113.10" or "203.0.113.0/24".
 FRONTEND_ALLOWED_IP="${FRONTEND_ALLOWED_IP:-}"
@@ -1569,7 +1569,7 @@ send_discord_boot_ping() {
   if [[ -n "$FRONTEND_URL" ]]; then
     msg="✅ OpenClaw bootstrap complete (${ts}) on ${host}${ip:+ (${ip})}. Discord route is live. Frontend: ${FRONTEND_URL} (admin: ${FRONTEND_URL}/admin, allowlist: ${FRONTEND_ALLOWED_IP})"
   else
-    msg="⚠️ OpenClaw bootstrap complete (${ts}) on ${host}${ip:+ (${ip})}, Discord route is live, but frontend validation failed. Run: curl -s http://127.0.0.1/ | head -n 20"
+    msg="✅ OpenClaw bootstrap complete (${ts}) on ${host}${ip:+ (${ip})}. Discord route is live. Private Syntella API is available over Tailscale on port ${SYNTELLA_API_PORT}."
   fi
 
   local attempt
@@ -1685,7 +1685,7 @@ main() {
 
   say "Starting/restarting gateway service"
   if ! start_gateway; then
-    echo "Warning: gateway startup reported failure; continuing with frontend setup + diagnostics."
+    echo "Warning: gateway startup reported failure; continuing with diagnostics."
   fi
 
   configure_exec_approvals_for_autonomous_spawning
@@ -1700,7 +1700,7 @@ main() {
     send_discord_boot_ping || true
   else
     echo "Gateway not listening on port 18789"
-    echo "You can still access/edit frontend while gateway troubleshooting continues."
+    echo "The private Syntella API and droplet runtime can still be inspected while gateway troubleshooting continues."
   fi
 
   print_summary

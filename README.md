@@ -18,8 +18,8 @@ Opinionated bootstrap for running OpenClaw on a DigitalOcean Ubuntu droplet with
 - Spawn flow still aborts if the main bot token changes during spawn (safety guard)
 - Exposes the Syntella API for main-site portal access over Tailscale on port `8788`
 - Keeps the Syntella API firewalled to `tailscale0` and loopback
-- Optionally sets up a public workspace frontend on nginx when `FRONTEND_ENABLED=1`
-- Sends a startup ping message to the configured Discord channel after bootstrap (includes frontend URL, hostname, and detected droplet IP)
+- Optionally sets up a legacy public workspace frontend on nginx when `FRONTEND_ENABLED=1`
+- Sends a startup ping message to the configured Discord channel after bootstrap (includes tailnet/API context, and frontend URL only if explicitly enabled)
 - Installs a global `/usr/local/bin/openclaw` shim (so root/sudo users can run `openclaw ...` without switching users)
 
 ## Required inputs
@@ -39,6 +39,7 @@ Opinionated bootstrap for running OpenClaw on a DigitalOcean Ubuntu droplet with
 - `TS_HOSTNAME` (recommended format: `syntella-<org-slug>`)
 
 Bootstrap seeds a provider-first model catalog for OpenAI, Anthropic, and Moonshot. If no provider key is supplied yet, the catalog still exists and can be connected later from the portal by adding one API key per provider.
+The canonical seeded defaults live in `config/default-model-catalog.json`, so new provider models can be added in one place and then refreshed into droplets.
 
 Auth is standardized via `/etc/openclaw/openclaw.env` (root-owned, group-readable by `openclaw`) and sourced by shell startup + bootstrap launchers, so child/spawned agents can inherit the same API key consistently.
 
@@ -58,8 +59,6 @@ export MOONSHOT_API_KEY="YOUR_MOONSHOT_API_KEY"
 export SYNTELLA_PORTAL_API_TOKEN="YOUR_SHARED_DROPLET_TOKEN"
 export TS_AUTHKEY="tskey-..."
 export TS_HOSTNAME="syntella-example-client"
-export FRONTEND_ENABLED=0
-
 # 3) Run bootstrap
 curl -fsSL https://raw.githubusercontent.com/DanielH3o/syntella/main/scripts/bootstrap-root.sh | bash
 ```
@@ -77,7 +76,6 @@ export MOONSHOT_API_KEY="YOUR_MOONSHOT_API_KEY"
 export SYNTELLA_PORTAL_API_TOKEN="YOUR_SHARED_DROPLET_TOKEN"
 export TS_AUTHKEY="tskey-..."
 export TS_HOSTNAME="syntella-example-client"
-export FRONTEND_ENABLED=0
 curl -fsSL https://raw.githubusercontent.com/DanielH3o/syntella/main/scripts/bootstrap-root.sh | bash
 ```
 
@@ -121,7 +119,6 @@ export MOONSHOT_API_KEY="YOUR_MOONSHOT_API_KEY"
 export SYNTELLA_PORTAL_API_TOKEN="YOUR_SHARED_DROPLET_TOKEN"
 export TS_AUTHKEY="tskey-..."
 export TS_HOSTNAME="syntella-example-client"
-export FRONTEND_ENABLED=0
 bash scripts/bootstrap-openclaw.sh
 ```
 
