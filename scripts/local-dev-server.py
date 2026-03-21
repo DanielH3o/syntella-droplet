@@ -1295,7 +1295,32 @@ def probe_gateway_agent_primary_model(agent_id="main", env=None):
     return extract_gateway_agent_primary_model(payload, agent_id), None
 
 
-def restart_openclaw_gateway(reason="runtime config update"):
+def wait_for_gateway_agent_primary_model(agent_id, expected_model_primary, env, deadline):
+    last_probe_error = None
+    last_live_model = None
+
+    while time.time() < deadline:
+        if not gateway_is_listening():
+            time.sleep(1)
+            continue
+
+        live_model, probe_error = probe_gateway_agent_primary_model(agent_id, env)
+        if live_model:
+            last_live_model = live_model
+        if probe_error:
+            last_probe_error = probe_error
+
+        if not expected_model_primary:
+            return live_model, probe_error, True
+        if live_model == expected_model_primary:
+            return live_model, probe_error, True
+
+        time.sleep(1)
+
+    return last_live_model, last_probe_error, False
+
+
+def restart_openclaw_gateway(reason="runtime config update", expected_agent_id="main", expected_model_primary=None):
     env = build_openclaw_runtime_env()
     OPENCLAW_GATEWAY_LOG.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1304,6 +1329,8 @@ def restart_openclaw_gateway(reason="runtime config update"):
         "reason": reason,
         "port": OPENCLAW_GATEWAY_PORT,
         "log_file": str(OPENCLAW_GATEWAY_LOG),
+        "expected_agent_id": expected_agent_id,
+        "expected_model_primary": expected_model_primary,
     }
 
     try:
@@ -1317,18 +1344,25 @@ def restart_openclaw_gateway(reason="runtime config update"):
         details["daemon_restart_output"] = (restart_result.stdout or restart_result.stderr or "").strip()
         if restart_result.returncode == 0:
             deadline = time.time() + 45
-            while time.time() < deadline:
-                if gateway_is_listening():
-                    details["ok"] = True
-                    live_model, probe_error = probe_gateway_agent_primary_model("main", env)
-                    if live_model:
-                        details["live_main_model"] = live_model
-                    elif probe_error:
-                        details["live_probe_error"] = probe_error
-                    details["restart_mode"] = "daemon"
-                    return details
-                time.sleep(1)
-            details["daemon_restart_error"] = "Gateway did not become ready within 45 seconds after daemon restart."
+            live_model, probe_error, matched = wait_for_gateway_agent_primary_model(
+                expected_agent_id or "main",
+                expected_model_primary,
+                env,
+                deadline,
+            )
+            if live_model:
+                details["live_main_model"] = live_model
+            elif probe_error:
+                details["live_probe_error"] = probe_error
+            if matched:
+                details["ok"] = True
+                details["restart_mode"] = "daemon"
+                return details
+            details["daemon_restart_error"] = (
+                f"Gateway did not report the expected model within 45 seconds after daemon restart."
+                if expected_model_primary
+                else "Gateway did not become ready within 45 seconds after daemon restart."
+            )
         else:
             details["daemon_restart_error"] = details["daemon_restart_output"] or "Gateway daemon restart failed."
     except Exception as exc:
@@ -1386,22 +1420,30 @@ def restart_openclaw_gateway(reason="runtime config update"):
     details["pid"] = process.pid
 
     deadline = time.time() + 30
-    while time.time() < deadline:
-        if gateway_is_listening():
-            details["ok"] = True
-            live_model, probe_error = probe_gateway_agent_primary_model("main", env)
-            if live_model:
-                details["live_main_model"] = live_model
-            elif probe_error:
-                details["live_probe_error"] = probe_error
-            details["restart_mode"] = "manual"
-            return details
-        if process.poll() is not None:
-            break
-        time.sleep(1)
+    live_model, probe_error, matched = wait_for_gateway_agent_primary_model(
+        expected_agent_id or "main",
+        expected_model_primary,
+        env,
+        deadline,
+    )
+    if live_model:
+        details["live_main_model"] = live_model
+    elif probe_error:
+        details["live_probe_error"] = probe_error
+    if matched:
+        details["ok"] = True
+        details["restart_mode"] = "manual"
+        return details
+    if process.poll() is not None:
+        details["exit_code"] = process.poll()
+    else:
+        details["exit_code"] = process.poll()
 
-    details["exit_code"] = process.poll()
-    details["error"] = "Gateway did not become ready within 30 seconds."
+    details["error"] = (
+        f"Gateway did not report expected model {expected_model_primary} for {expected_agent_id} within 30 seconds."
+        if expected_model_primary
+        else "Gateway did not become ready within 30 seconds."
+    )
     return details
 
 
@@ -3723,7 +3765,18 @@ class Handler(BaseHTTPRequestHandler):
             body = self._parse_body()
             try:
                 agent, runtime_changed, session_reset = update_agent_metadata(agent_id, body)
-                runtime = restart_openclaw_gateway("agent runtime update") if runtime_changed else None
+                expected_model_primary = None
+                if runtime_changed and "model_primary" in body:
+                    expected_model_primary = str((agent or {}).get("model_primary") or "").strip() or get_default_primary_model()
+                runtime = (
+                    restart_openclaw_gateway(
+                        "agent runtime update",
+                        expected_agent_id=agent_id,
+                        expected_model_primary=expected_model_primary,
+                    )
+                    if runtime_changed
+                    else None
+                )
                 if session_reset and session_reset.get("requested"):
                     agent_key = session_reset.get("agent_id") or agent_id
                     session_reset.update(reset_agent_session_state(agent_key))
