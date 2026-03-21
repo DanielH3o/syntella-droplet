@@ -1167,6 +1167,53 @@ def run_openclaw_command(args):
     return (result.stdout or "").strip()
 
 
+def extract_gateway_agent_primary_model(payload, agent_id="main"):
+    agent_key = (agent_id or "").strip() or "main"
+    agents = payload
+    if isinstance(payload, dict):
+        if isinstance(payload.get("agents"), list):
+            agents = payload.get("agents")
+        elif isinstance(payload.get("result"), list):
+            agents = payload.get("result")
+    if not isinstance(agents, list):
+        return None
+
+    for entry in agents:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("id") or "").strip() != agent_key:
+            continue
+        model = entry.get("model")
+        if isinstance(model, dict):
+            primary = str(model.get("primary") or "").strip()
+            if primary:
+                return primary
+        primary = str(entry.get("modelPrimary") or "").strip()
+        if primary:
+            return primary
+    return None
+
+
+def probe_gateway_agent_primary_model(agent_id="main", env=None):
+    runtime_env = dict(env or os.environ.copy())
+    result = subprocess.run(
+        ["openclaw", "gateway", "call", "agents.list", "--params", "{}", "--json"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=runtime_env,
+    )
+    if result.returncode != 0:
+        return None, (result.stderr or result.stdout or "").strip()
+
+    raw = (result.stdout or "").strip()
+    try:
+        payload = json.loads(raw) if raw else None
+    except json.JSONDecodeError:
+        return None, raw
+    return extract_gateway_agent_primary_model(payload, agent_id), None
+
+
 def restart_openclaw_gateway(reason="runtime config update"):
     env = os.environ.copy()
     env["PATH"] = f"{Path.home() / '.npm-global' / 'bin'}:{env.get('PATH', '')}"
@@ -1178,6 +1225,34 @@ def restart_openclaw_gateway(reason="runtime config update"):
         "port": OPENCLAW_GATEWAY_PORT,
         "log_file": str(OPENCLAW_GATEWAY_LOG),
     }
+
+    try:
+        restart_result = subprocess.run(
+            ["openclaw", "gateway", "restart", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+        )
+        details["daemon_restart_output"] = (restart_result.stdout or restart_result.stderr or "").strip()
+        if restart_result.returncode == 0:
+            deadline = time.time() + 45
+            while time.time() < deadline:
+                if gateway_is_listening():
+                    details["ok"] = True
+                    live_model, probe_error = probe_gateway_agent_primary_model("main", env)
+                    if live_model:
+                        details["live_main_model"] = live_model
+                    elif probe_error:
+                        details["live_probe_error"] = probe_error
+                    details["restart_mode"] = "daemon"
+                    return details
+                time.sleep(1)
+            details["daemon_restart_error"] = "Gateway did not become ready within 45 seconds after daemon restart."
+        else:
+            details["daemon_restart_error"] = details["daemon_restart_output"] or "Gateway daemon restart failed."
+    except Exception as exc:
+        details["daemon_restart_error"] = str(exc)
 
     try:
         stop_result = subprocess.run(
@@ -1244,6 +1319,12 @@ def restart_openclaw_gateway(reason="runtime config update"):
     while time.time() < deadline:
         if gateway_is_listening():
             details["ok"] = True
+            live_model, probe_error = probe_gateway_agent_primary_model("main", env)
+            if live_model:
+                details["live_main_model"] = live_model
+            elif probe_error:
+                details["live_probe_error"] = probe_error
+            details["restart_mode"] = "manual"
             return details
         if process.poll() is not None:
             break
