@@ -490,7 +490,6 @@ fi
 NODE_BIN="$(command -v node || true)"
 OPENCLAW_MJS="$(readlink -f "$OPENCLAW_BIN" 2>/dev/null || realpath "$OPENCLAW_BIN" 2>/dev/null || echo "$OPENCLAW_BIN")"
 oc() { "$OPENCLAW_BIN" "$@"; }
-install_openclaw_cli_wrapper
 
 say "Pre-creating OpenClaw state dirs to avoid first-run prompts"
 mkdir -p "$HOME/.openclaw"
@@ -665,6 +664,8 @@ EOF
     hash -r || true
   fi
 }
+
+install_openclaw_cli_wrapper
 
 parse_discord_target() {
   local raw="$1"
