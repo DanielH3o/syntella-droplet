@@ -2113,6 +2113,31 @@ def derive_default_agent_tools(specialty=None, integrations=None):
     return list(dict.fromkeys(tool_names))
 
 
+def ensure_runtime_agent_entry(config, agent_id):
+    agents_cfg = config.setdefault("agents", {})
+    entries = agents_cfg.get("list")
+    if not isinstance(entries, list):
+        entries = []
+        agents_cfg["list"] = entries
+
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("id") == agent_id:
+            return entry
+
+    if agent_id != "main":
+        return None
+
+    entry = {
+        "id": "main",
+        "name": "Syntella",
+        "workspace": str((OPENCLAW_STATE_DIR / "workspace" / "syntella").expanduser()),
+        "agentDir": str((OPENCLAW_STATE_DIR / "agents" / "main" / "agent").expanduser()),
+        "identity": {"name": "Syntella"},
+    }
+    entries.insert(0, entry)
+    return entry
+
+
 def build_integration_plugin_config(system, integration):
     config = dict(integration.get("config") or {})
     secrets = dict(integration.get("secrets") or {})
@@ -2202,11 +2227,7 @@ def sync_agent_runtime_tools(agent_id, agent_meta, integrations=None):
     if not isinstance(entries, list):
         return False
 
-    target_entry = None
-    for entry in entries:
-        if isinstance(entry, dict) and entry.get("id") == agent_id:
-            target_entry = entry
-            break
+    target_entry = ensure_runtime_agent_entry(config, agent_id)
     if target_entry is None:
         return False
 
@@ -2228,16 +2249,7 @@ def sync_agent_runtime_tools(agent_id, agent_meta, integrations=None):
 
 def sync_agent_runtime_model(agent_id, agent_meta):
     config, _ = ensure_seed_model_catalog(write_back=True)
-    agents_cfg = config.get("agents")
-    entries = agents_cfg.get("list") if isinstance(agents_cfg, dict) else None
-    if not isinstance(entries, list):
-        return False
-
-    target_entry = None
-    for entry in entries:
-        if isinstance(entry, dict) and entry.get("id") == agent_id:
-            target_entry = entry
-            break
+    target_entry = ensure_runtime_agent_entry(config, agent_id)
     if target_entry is None:
         return False
 
@@ -2247,6 +2259,16 @@ def sync_agent_runtime_model(agent_id, agent_meta):
         model_cfg = {}
     model_cfg["primary"] = model_primary
     target_entry["model"] = model_cfg
+
+    if agent_id == "main":
+        agents_cfg = config.setdefault("agents", {})
+        defaults_cfg = agents_cfg.setdefault("defaults", {})
+        default_model_cfg = defaults_cfg.get("model")
+        if not isinstance(default_model_cfg, dict):
+            default_model_cfg = {}
+            defaults_cfg["model"] = default_model_cfg
+        default_model_cfg["primary"] = model_primary
+
     write_openclaw_config(config)
     return True
 
