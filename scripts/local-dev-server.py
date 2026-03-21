@@ -97,6 +97,7 @@ PROVIDER_ENV_KEYS = {
     "anthropic": "ANTHROPIC_API_KEY",
     "moonshot": "MOONSHOT_API_KEY",
 }
+OPENCLAW_PROVIDER_UI_ONLY_KEYS = {"displayName", "description", "authType", "connectLabel"}
 OAUTH_PROFILE_ID = "openai-codex:default"
 OPENAI_CODEX_PROVIDER = "openai-codex"
 OPENAI_CODEX_AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
@@ -1343,6 +1344,17 @@ def merge_seed_model_entry(default_model, existing_model):
     return merged
 
 
+def scrub_provider_runtime_metadata(provider_cfg):
+    changed = False
+    if not isinstance(provider_cfg, dict):
+        return changed
+    for key in OPENCLAW_PROVIDER_UI_ONLY_KEYS:
+        if key in provider_cfg:
+            del provider_cfg[key]
+            changed = True
+    return changed
+
+
 def preferred_seed_primary_model():
     defaults = load_default_model_catalog()
     providers = defaults.get("providers") if isinstance(defaults.get("providers"), dict) else {}
@@ -1381,13 +1393,12 @@ def ensure_seed_model_catalog(config=None, write_back=False):
             providers_cfg[provider_name] = provider_cfg
             changed = True
 
+        if scrub_provider_runtime_metadata(provider_cfg):
+            changed = True
+
         for config_key, default_key in (
-            ("displayName", "displayName"),
-            ("description", "description"),
             ("baseUrl", "baseUrl"),
             ("api", "api"),
-            ("authType", "authType"),
-            ("connectLabel", "connectLabel"),
         ):
             value = provider_defaults.get(default_key)
             if value and not provider_cfg.get(config_key):
@@ -1502,13 +1513,13 @@ def list_model_providers():
             default_model = f"{provider_name}/{provider_models[0].get('model_id')}"
         providers.append({
             "provider": provider_name,
-            "display_name": provider_cfg.get("displayName") or default_meta.get("displayName") or provider_name.title(),
-            "description": provider_cfg.get("description") or default_meta.get("description") or "",
+            "display_name": default_meta.get("displayName") or provider_name.title(),
+            "description": default_meta.get("description") or "",
             "provider_base_url": provider_cfg.get("baseUrl") or default_meta.get("baseUrl") or "",
             "provider_api_adapter": provider_cfg.get("api") or default_meta.get("api") or "",
             "provider_has_api_key": bool(provider_cfg.get("apiKey")),
             "auth_type": auth_type,
-            "connect_label": provider_cfg.get("connectLabel") or default_meta.get("connectLabel") or "",
+            "connect_label": default_meta.get("connectLabel") or "",
             "env_key": default_meta.get("envKey") or PROVIDER_ENV_KEYS.get(provider_name) or "",
             "model_count": len(provider_models),
             "enabled_model_count": len([model for model in provider_models if model.get("enabled")]),
@@ -1549,6 +1560,7 @@ def upsert_model_provider(body):
     if not isinstance(provider_cfg, dict):
         provider_cfg = {}
         providers_cfg[provider] = provider_cfg
+    scrub_provider_runtime_metadata(provider_cfg)
 
     base_url = (body.get("provider_base_url") or "").strip()
     api_adapter = (body.get("provider_api_adapter") or "").strip()
@@ -1588,6 +1600,8 @@ def upsert_model_provider(body):
 
 def load_openclaw_model_catalog():
     config, _ = ensure_seed_model_catalog(write_back=True)
+    defaults = load_default_model_catalog()
+    default_providers = defaults.get("providers") if isinstance(defaults.get("providers"), dict) else {}
     catalog = {}
     payload = config
     models = payload.get("models") if isinstance(payload, dict) else None
@@ -1596,6 +1610,7 @@ def load_openclaw_model_catalog():
         return catalog
 
     for provider_name, provider_meta in providers.items():
+        default_meta = default_providers.get(provider_name) if isinstance(default_providers.get(provider_name), dict) else {}
         provider_models = provider_meta.get("models") or []
         if not isinstance(provider_models, list):
             continue
@@ -1612,8 +1627,8 @@ def load_openclaw_model_catalog():
                 "model_id": model_id,
                 "display_name": model.get("name") or model_id,
                 "enabled": True,
-                "provider_display_name": provider_meta.get("displayName") or provider_name,
-                "provider_description": provider_meta.get("description") or "",
+                "provider_display_name": default_meta.get("displayName") or provider_name,
+                "provider_description": default_meta.get("description") or "",
                 "provider_base_url": provider_meta.get("baseUrl") or "",
                 "provider_api_adapter": provider_meta.get("api") or "",
                 "provider_has_api_key": bool(provider_meta.get("apiKey")),

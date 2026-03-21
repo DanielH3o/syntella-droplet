@@ -1110,9 +1110,11 @@ for provider_name, provider_defaults in catalog_providers.items():
     if not isinstance(provider_cfg, dict):
         provider_cfg = {}
 
+    for key in ("displayName", "description", "authType", "connectLabel"):
+        if key in provider_cfg:
+            del provider_cfg[key]
+
     for field, source_field in (
-        ("displayName", "displayName"),
-        ("description", "description"),
         ("baseUrl", "baseUrl"),
         ("api", "api"),
     ):
