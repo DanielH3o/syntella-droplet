@@ -1265,8 +1265,66 @@ def run_openclaw_command(args, env=None, timeout=20):
     )
     if result.returncode != 0:
         stderr = (result.stderr or result.stdout or "").strip()
+        if "pairing required" in stderr.lower():
+            repair_error = repair_openclaw_cli_pairing(runtime_env)
+            if not repair_error:
+                retry = subprocess.run(
+                    ["openclaw", *args],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    env=runtime_env,
+                )
+                if retry.returncode == 0:
+                    return (retry.stdout or "").strip()
+                stderr = (retry.stderr or retry.stdout or "").strip()
+            elif repair_error:
+                stderr = f"{stderr}\nCLI pairing repair failed: {repair_error}".strip()
         raise RuntimeError(stderr or "OpenClaw cron command failed")
     return (result.stdout or "").strip()
+
+
+def repair_openclaw_cli_pairing(env):
+    runtime_env = dict(env or build_openclaw_runtime_env())
+
+    healthy = subprocess.run(
+        ["openclaw", "devices", "list", "--json"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=runtime_env,
+    )
+    if healthy.returncode == 0:
+        return ""
+
+    subprocess.run(
+        ["openclaw", "status"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=runtime_env,
+    )
+
+    repair = subprocess.run(
+        ["openclaw", "devices", "approve", "--latest", "--json"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=runtime_env,
+    )
+    if repair.returncode != 0:
+        return (repair.stderr or repair.stdout or "").strip() or "Local CLI pairing approval failed."
+
+    verify = subprocess.run(
+        ["openclaw", "devices", "list", "--json"],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=runtime_env,
+    )
+    if verify.returncode == 0:
+        return ""
+    return (verify.stderr or verify.stdout or "").strip() or "Local CLI pairing still unavailable."
 
 
 def extract_gateway_agent_primary_model(payload, agent_id="main"):
