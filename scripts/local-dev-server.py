@@ -46,6 +46,10 @@ USAGE_SYNC_MAX_EVENTS = int(os.environ.get("SYNTELLA_USAGE_SYNC_MAX_EVENTS", "20
 TERMINAL_RUN_STATUSES = {"review", "done", "cancelled", "failed"}
 INTERNAL_MODEL_IDS = {"delivery-mirror", "gateway-injected"}
 VALID_TASK_STATUSES = {"backlog", "todo", "in_progress", "review", "done"}
+OPENCLAW_HANDSHAKE_WORKAROUND_ENV = {
+    "VITEST": os.environ.get("VITEST", "1").strip() or "1",
+    "OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS": os.environ.get("OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS", "30000").strip() or "30000",
+}
 CORE_TOOL_DEFS = [
     {
         "tool": "tasks",
@@ -556,6 +560,8 @@ def build_openclaw_runtime_env():
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
         "MOONSHOT_API_KEY",
+        "VITEST",
+        "OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS",
     ):
         if env.get(key):
             continue
@@ -567,7 +573,23 @@ def build_openclaw_runtime_env():
         token = read_gateway_token_value()
         if token:
             env["OPENCLAW_GATEWAY_TOKEN"] = token
+    for key, value in OPENCLAW_HANDSHAKE_WORKAROUND_ENV.items():
+        env.setdefault(key, value)
     return env
+
+
+def resolve_openclaw_cli_binary(env=None):
+    runtime_env = dict(env or build_openclaw_runtime_env())
+    candidates = [
+        Path.home() / ".local" / "bin" / "openclaw",
+        Path.home() / ".npm-global" / "bin" / "openclaw",
+        Path("/usr/local/bin/openclaw"),
+    ]
+    for candidate in candidates:
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    resolved = shutil.which("openclaw", path=runtime_env.get("PATH"))
+    return resolved or "openclaw"
 
 
 def stop_openclaw_gateway_processes(env):
@@ -1256,8 +1278,9 @@ def compile_routine_schedule(body):
 
 def run_openclaw_command(args, env=None, timeout=20):
     runtime_env = dict(env or build_openclaw_runtime_env())
+    openclaw_bin = resolve_openclaw_cli_binary(runtime_env)
     result = subprocess.run(
-        ["openclaw", *args],
+        [openclaw_bin, *args],
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -1269,7 +1292,7 @@ def run_openclaw_command(args, env=None, timeout=20):
             repair_error = repair_openclaw_cli_pairing(runtime_env)
             if not repair_error:
                 retry = subprocess.run(
-                    ["openclaw", *args],
+                    [openclaw_bin, *args],
                     capture_output=True,
                     text=True,
                     timeout=timeout,
@@ -1286,9 +1309,10 @@ def run_openclaw_command(args, env=None, timeout=20):
 
 def repair_openclaw_cli_pairing(env):
     runtime_env = dict(env or build_openclaw_runtime_env())
+    openclaw_bin = resolve_openclaw_cli_binary(runtime_env)
 
     healthy = subprocess.run(
-        ["openclaw", "devices", "list", "--json"],
+        [openclaw_bin, "devices", "list", "--json"],
         capture_output=True,
         text=True,
         timeout=20,
@@ -1298,7 +1322,7 @@ def repair_openclaw_cli_pairing(env):
         return ""
 
     subprocess.run(
-        ["openclaw", "status"],
+        [openclaw_bin, "status"],
         capture_output=True,
         text=True,
         timeout=20,
@@ -1306,7 +1330,7 @@ def repair_openclaw_cli_pairing(env):
     )
 
     repair = subprocess.run(
-        ["openclaw", "devices", "approve", "--latest", "--json"],
+        [openclaw_bin, "devices", "approve", "--latest", "--json"],
         capture_output=True,
         text=True,
         timeout=30,
@@ -1316,7 +1340,7 @@ def repair_openclaw_cli_pairing(env):
         return (repair.stderr or repair.stdout or "").strip() or "Local CLI pairing approval failed."
 
     verify = subprocess.run(
-        ["openclaw", "devices", "list", "--json"],
+        [openclaw_bin, "devices", "list", "--json"],
         capture_output=True,
         text=True,
         timeout=20,

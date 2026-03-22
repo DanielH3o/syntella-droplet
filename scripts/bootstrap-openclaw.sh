@@ -53,6 +53,8 @@ SYNTELLA_EXEC_MAX_OUTPUT_BYTES="${SYNTELLA_EXEC_MAX_OUTPUT_BYTES:-16384}"
 OPERATOR_BRIDGE_PORT="${OPERATOR_BRIDGE_PORT:-8787}"
 OPERATOR_BRIDGE_TOKEN=""
 SYNTELLA_API_PORT="${SYNTELLA_API_PORT:-8788}"
+OPENCLAW_HANDSHAKE_WORKAROUND_ENABLED="${OPENCLAW_HANDSHAKE_WORKAROUND_ENABLED:-1}"
+OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS="${OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS:-30000}"
 SYNTELLA_API_BIND_HOST="${SYNTELLA_API_BIND_HOST:-0.0.0.0}"
 SYNTELLA_PRESERVE_CUSTOMER_STATE="${SYNTELLA_PRESERVE_CUSTOMER_STATE:-1}"
 TAILSCALE_HOSTNAME_EFFECTIVE=""
@@ -95,10 +97,10 @@ ensure_openclaw_on_path() {
   command -v openclaw >/dev/null 2>&1
 }
 
-resolve_openclaw_bin() {
+resolve_openclaw_real_bin() {
   local candidate=""
 
-  for candidate in "$HOME/.npm-global/bin/openclaw" "/usr/local/bin/openclaw" "$HOME/.local/bin/openclaw"; do
+  for candidate in "$HOME/.npm-global/bin/openclaw" "/usr/local/bin/openclaw"; do
     if [[ -x "$candidate" ]]; then
       printf '%s\n' "$candidate"
       return 0
@@ -122,6 +124,19 @@ resolve_openclaw_bin() {
   fi
 
   return 1
+}
+
+resolve_openclaw_cli_bin() {
+  local candidate=""
+
+  for candidate in "$HOME/.local/bin/openclaw"; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  resolve_openclaw_real_bin
 }
 
 render_template() {
@@ -480,16 +495,15 @@ if ! ensure_openclaw_on_path; then
   echo "OpenClaw appears installed but is not on PATH; attempting direct binary resolution..."
 fi
 
-OPENCLAW_BIN="$(resolve_openclaw_bin || true)"
-if [[ -z "$OPENCLAW_BIN" ]]; then
+OPENCLAW_REAL_BIN="$(resolve_openclaw_real_bin || true)"
+if [[ -z "$OPENCLAW_REAL_BIN" ]]; then
   echo "OpenClaw installed but executable could not be resolved."
-  echo "Checked: command -v openclaw, ~/.npm-global/bin/openclaw, ~/.local/bin/openclaw, /usr/local/bin/openclaw"
+  echo "Checked: command -v openclaw, ~/.npm-global/bin/openclaw, /usr/local/bin/openclaw"
   echo "Try: export PATH=\"$HOME/.npm-global/bin:$PATH\""
   echo "Then re-run this script."
   exit 1
 fi
-NODE_BIN="$(command -v node || true)"
-OPENCLAW_MJS="$(readlink -f "$OPENCLAW_BIN" 2>/dev/null || realpath "$OPENCLAW_BIN" 2>/dev/null || echo "$OPENCLAW_BIN")"
+OPENCLAW_BIN="$OPENCLAW_REAL_BIN"
 oc() { "$OPENCLAW_BIN" "$@"; }
 
 say "Pre-creating OpenClaw state dirs to avoid first-run prompts"
@@ -596,7 +610,7 @@ PY
 }
 
 install_openclaw_cli_wrapper() {
-  local real_bin="$OPENCLAW_BIN"
+  local real_bin="${OPENCLAW_REAL_BIN:-$OPENCLAW_BIN}"
   local wrapper_dir="$HOME/.local/bin"
   local wrapper_path="$wrapper_dir/openclaw"
 
@@ -667,6 +681,11 @@ EOF
 }
 
 install_openclaw_cli_wrapper
+OPENCLAW_BIN="$(resolve_openclaw_cli_bin || true)"
+if [[ -z "$OPENCLAW_BIN" ]]; then
+  echo "OpenClaw wrapper installation completed but the CLI path could not be resolved."
+  exit 1
+fi
 
 parse_discord_target() {
   local raw="$1"
@@ -916,6 +935,8 @@ OPENAI_API_KEY="${OPENAI_API_KEY}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
 OPENCLAW_GATEWAY_TOKEN="${gateway_token}"
 OPENCLAW_HOME="${HOME}"
+VITEST="${OPENCLAW_HANDSHAKE_WORKAROUND_ENABLED}"
+OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS="${OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS}"
 SYNTELLA_PORTAL_API_TOKEN="${SYNTELLA_PORTAL_API_TOKEN}"
 SYNTELLA_ENABLE_DROPLET_FRONTEND="${SYNTELLA_ENABLE_DROPLET_FRONTEND}"
 EOF
@@ -946,6 +967,8 @@ MOONSHOT_API_KEY="${MOONSHOT_API_KEY}"
 OPENAI_API_KEY="${OPENAI_API_KEY}"
 ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"
 OPENCLAW_GATEWAY_TOKEN="${gateway_token}"
+VITEST="${OPENCLAW_HANDSHAKE_WORKAROUND_ENABLED}"
+OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS="${OPENCLAW_TEST_HANDSHAKE_TIMEOUT_MS}"
 EOF
   chmod 600 "$dotenv_file"
 }
@@ -1761,11 +1784,7 @@ start_gateway() {
 
   echo "Starting gateway..."
 
-  if [[ -n "$NODE_BIN" && -x "$NODE_BIN" ]]; then
-    nohup "$NODE_BIN" "$OPENCLAW_MJS" gateway --port 18789 >"$log_file" 2>&1 &
-  else
-    nohup bash -lc 'export PATH="$HOME/.npm-global/bin:$PATH"; exec openclaw gateway --port 18789' >"$log_file" 2>&1 &
-  fi
+  nohup "$OPENCLAW_BIN" gateway --port 18789 >"$log_file" 2>&1 &
 
   # Wait up to 30s for gateway to bind
   local waited=0
@@ -1780,8 +1799,7 @@ start_gateway() {
 
   echo "Gateway failed to start within 30s. Check logs: $log_file"
   echo "Resolved openclaw binary: $OPENCLAW_BIN"
-  echo "Resolved openclaw entrypoint: $OPENCLAW_MJS"
-  echo "Resolved node binary: ${NODE_BIN:-<not-found>}"
+  echo "Resolved openclaw real binary: ${OPENCLAW_REAL_BIN:-<not-found>}"
   ls -l "$OPENCLAW_BIN" 2>/dev/null || true
   pgrep -af "openclaw gateway|openclaw-gateway" || true
   return 1

@@ -25,6 +25,14 @@ AGENT_DIR="$ROOT_HOME/agents/$AGENT_ID/agent"
 REGISTRY="$SHARED_WS_ROOT/agents/registry.json"
 SPAWN_LOG="$AGENT_WS/spawn.log"
 NATIVE_HELPER="$ROOT_HOME/operator-bridge/openclaw_native_agent.py"
+OPENCLAW_CLI="$HOME/.local/bin/openclaw"
+
+if [[ ! -x "$OPENCLAW_CLI" ]]; then
+  OPENCLAW_CLI="$(command -v openclaw 2>/dev/null || true)"
+fi
+if [[ -z "$OPENCLAW_CLI" ]]; then
+  OPENCLAW_CLI="openclaw"
+fi
 
 mkdir -p "$AGENT_WS/memory" "$SHARED_WS_ROOT/agents" "$ROOT_HOME/logs"
 
@@ -264,11 +272,11 @@ with open(team_path, "w", encoding="utf-8") as f:
 PY
 
 log "Restarting root gateway to pick up native agent config"
-openclaw gateway stop >/dev/null 2>&1 || true
+"$OPENCLAW_CLI" gateway stop >/dev/null 2>&1 || true
 pkill -f "openclaw gateway" >/dev/null 2>&1 || true
 sleep 1
 find "$ROOT_HOME" /tmp -name 'gateway.*.lock' -delete 2>/dev/null || true
-nohup bash -lc 'export PATH="$HOME/.npm-global/bin:$PATH"; exec openclaw gateway --port 18789' > "$ROOT_HOME/logs/gateway.log" 2>&1 &
+nohup "$OPENCLAW_CLI" gateway --port 18789 > "$ROOT_HOME/logs/gateway.log" 2>&1 &
 GATEWAY_PID=$!
 
 ready=0
