@@ -403,6 +403,7 @@ Type=simple
 User=openclaw
 WorkingDirectory=$api_dir
 EnvironmentFile=$env_file
+EnvironmentFile=-/etc/openclaw/openclaw.env
 ExecStart=/usr/bin/python3 $api_py
 Restart=always
 RestartSec=5

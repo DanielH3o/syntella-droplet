@@ -33,6 +33,7 @@ DEFAULT_MODEL_CATALOG = Path(__file__).resolve().parent.parent / "config" / "def
 OPENCLAW_CRON_JOBS = OPENCLAW_STATE_DIR / "cron" / "jobs.json"
 OPENCLAW_RUNTIME_DIR = OPENCLAW_STATE_DIR / "runtime"
 OPERATOR_BRIDGE_ENV = Path("/etc/openclaw/operator-bridge.env")
+OPENCLAW_SHARED_ENV = Path("/etc/openclaw/openclaw.env")
 OPERATOR_BRIDGE_URL = os.environ.get("SYNTELLA_OPERATOR_BRIDGE_URL", "http://127.0.0.1:8787")
 DB_PATH = WORKSPACE / "tasks.db"
 REGISTRY = WORKSPACE / "agents" / "registry.json"
@@ -513,6 +514,21 @@ def gateway_is_listening():
         return False
 
 
+def read_env_file_value(path, key):
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            item_key, value = line.split("=", 1)
+            if item_key.strip() != key:
+                continue
+            return value.strip().strip('"').strip("'")
+    except OSError:
+        return ""
+    return ""
+
+
 def read_gateway_token_value():
     config = read_openclaw_config()
     gateway = config.get("gateway")
@@ -521,6 +537,8 @@ def read_gateway_token_value():
     token = str(token or "").strip()
     if token == "${OPENCLAW_GATEWAY_TOKEN}":
         token = str(os.environ.get("OPENCLAW_GATEWAY_TOKEN") or "").strip()
+        if not token:
+            token = read_env_file_value(OPENCLAW_SHARED_ENV, "OPENCLAW_GATEWAY_TOKEN")
     return token
 
 
@@ -532,6 +550,18 @@ def build_openclaw_runtime_env():
         env.get("PATH", ""),
     ]
     env["PATH"] = ":".join(part for part in path_parts if part)
+    for key in (
+        "OPENCLAW_HOME",
+        "OPENCLAW_GATEWAY_TOKEN",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "MOONSHOT_API_KEY",
+    ):
+        if env.get(key):
+            continue
+        value = read_env_file_value(OPENCLAW_SHARED_ENV, key)
+        if value:
+            env[key] = value
     env.setdefault("OPENCLAW_HOME", str(Path.home()))
     if not env.get("OPENCLAW_GATEWAY_TOKEN"):
         token = read_gateway_token_value()
@@ -580,17 +610,7 @@ def read_operator_bridge_token():
     token = os.environ.get("OPERATOR_BRIDGE_TOKEN", "").strip()
     if token:
         return token
-    try:
-        for line in OPERATOR_BRIDGE_ENV.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            if key.strip() == "OPERATOR_BRIDGE_TOKEN":
-                return value.strip().strip('"').strip("'")
-    except OSError:
-        return ""
-    return ""
+    return read_env_file_value(OPERATOR_BRIDGE_ENV, "OPERATOR_BRIDGE_TOKEN")
 
 
 def bridge_request(path, method="GET", payload=None, timeout=30):
