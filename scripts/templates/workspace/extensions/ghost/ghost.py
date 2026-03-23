@@ -15,6 +15,7 @@ from pathlib import Path
 
 PLUGIN_ID = "syntella-ghost"
 ACCEPT_VERSION = "v5.0"
+DEFAULT_USER_AGENT = os.environ.get("SYNTELLA_GHOST_USER_AGENT", "curl/8.7.1")
 SITE_ALIASES = {
     "asima": "asima",
     "asima.co.uk": "asima",
@@ -188,6 +189,7 @@ def ghost_request(site, method, resource_path, payload=None, params=None):
         "Accept": "application/json",
         "Accept-Version": ACCEPT_VERSION,
         "Authorization": f"Ghost {token}",
+        "User-Agent": DEFAULT_USER_AGENT,
     }
     if payload is not None:
         body = json.dumps(payload).encode("utf-8")
