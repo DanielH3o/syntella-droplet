@@ -33,6 +33,10 @@ node_modules/
 workspace/
 openclaw_workspace/
 .openclaw/
+!scripts/templates/workspace/
+!scripts/templates/workspace/**
+__pycache__/
+*.py[cod]
 
 # Compiled binary artifacts
 *.so
