@@ -1,8 +1,8 @@
 {
   "id": "syntella-ghost",
   "name": "Syntella Ghost",
-  "version": "0.1.0",
-  "description": "Ghost CMS integration tool for Syntella-managed publishing workflows.",
+  "version": "0.2.0",
+  "description": "Draft-only Ghost CMS integration tool for Syntella-managed editorial workflows.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
