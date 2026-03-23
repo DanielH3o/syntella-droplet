@@ -1,10 +1,13 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const helperPath = path.join(__dirname, "ghost.py");
+const helperPath = existsSync(path.join(__dirname, "ghost.py"))
+  ? path.join(__dirname, "ghost.py")
+  : path.join(__dirname, "status.py");
 
 const GHOST_ACTIONS = ["inspect", "list_posts", "get_post", "create_draft", "update_draft"] as const;
 const POST_STATUSES = ["all", "draft", "published", "scheduled", "sent"] as const;

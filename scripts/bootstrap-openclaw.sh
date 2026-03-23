@@ -204,7 +204,6 @@ assert_templates_exist() {
     "$TEMPLATE_DIR/workspace/extensions/reports/reports_db.py"
     "$TEMPLATE_DIR/workspace/extensions/ghost/openclaw.plugin.json"
     "$TEMPLATE_DIR/workspace/extensions/ghost/index.ts"
-    "$TEMPLATE_DIR/workspace/extensions/ghost/ghost.py"
     "$TEMPLATE_DIR/workspace/extensions/search-console/openclaw.plugin.json"
     "$TEMPLATE_DIR/workspace/extensions/search-console/index.ts"
     "$TEMPLATE_DIR/workspace/extensions/search-console/search_console.py"
@@ -218,6 +217,10 @@ assert_templates_exist() {
   for f in "${required[@]}"; do
     [[ -f "$f" ]] || { echo "Missing template file: $f"; exit 1; }
   done
+  if [[ ! -f "$TEMPLATE_DIR/workspace/extensions/ghost/ghost.py" && ! -f "$TEMPLATE_DIR/workspace/extensions/ghost/status.py" ]]; then
+    echo "Missing Ghost helper template file: expected ghost.py or status.py in $TEMPLATE_DIR/workspace/extensions/ghost"
+    exit 1
+  fi
 }
 
 install_tailscale() {
