@@ -4,18 +4,25 @@ import binascii
 import hashlib
 import hmac
 import json
+import mimetypes
 import os
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 
 PLUGIN_ID = "syntella-ghost"
 ACCEPT_VERSION = "v5.0"
 DEFAULT_USER_AGENT = os.environ.get("SYNTELLA_GHOST_USER_AGENT", "curl/8.7.1")
+OPENAI_API_BASE = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1").rstrip("/")
+OPENAI_IMAGE_MODEL = os.environ.get("SYNTELLA_GHOST_IMAGE_MODEL", "gpt-image-1")
+OPENAI_IMAGE_SIZE = os.environ.get("SYNTELLA_GHOST_IMAGE_SIZE", "1536x1024")
+OPENAI_IMAGE_QUALITY = os.environ.get("SYNTELLA_GHOST_IMAGE_QUALITY", "medium")
+OPENAI_IMAGE_FORMAT = os.environ.get("SYNTELLA_GHOST_IMAGE_FORMAT", "png")
 SITE_ALIASES = {
     "asima": "asima",
     "asima.co.uk": "asima",
@@ -222,6 +229,87 @@ def ghost_request(site, method, resource_path, payload=None, params=None):
         raise GhostError(f"Ghost API returned invalid JSON: {exc}") from exc
 
 
+def ghost_binary_request(site, method, resource_path, body, content_type, params=None):
+    base_url = site["adminUrl"]
+    token = build_token(site["adminKey"])
+    url = urllib.parse.urljoin(base_url, resource_path.lstrip("/"))
+    if params:
+        query = urllib.parse.urlencode({key: value for key, value in params.items() if value is not None})
+        if query:
+            url = f"{url}?{query}"
+
+    headers = {
+        "Accept": "application/json",
+        "Accept-Version": ACCEPT_VERSION,
+        "Authorization": f"Ghost {token}",
+        "Content-Type": content_type,
+        "User-Agent": DEFAULT_USER_AGENT,
+    }
+    request = urllib.request.Request(url, data=body, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="ignore")
+        try:
+            parsed = json.loads(error_body) if error_body else {}
+        except json.JSONDecodeError:
+            parsed = {}
+        errors = parsed.get("errors") if isinstance(parsed, dict) else None
+        if isinstance(errors, list) and errors and isinstance(errors[0], dict):
+            message = errors[0].get("message") or error_body or str(exc)
+        else:
+            message = error_body or str(exc)
+        raise GhostError(f"Ghost API request failed ({exc.code}): {message.strip()}") from exc
+    except urllib.error.URLError as exc:
+        raise GhostError(f"Could not reach Ghost API: {exc.reason}") from exc
+
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GhostError(f"Ghost API returned invalid JSON: {exc}") from exc
+
+
+def openai_request(resource_path, payload):
+    api_key = str(os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        raise GhostError("OPENAI_API_KEY is missing, so the tool cannot generate an image.")
+
+    body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "User-Agent": DEFAULT_USER_AGENT,
+    }
+    url = f"{OPENAI_API_BASE}/{resource_path.lstrip('/')}"
+    request = urllib.request.Request(url, data=body, method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            raw = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="ignore")
+        try:
+            parsed = json.loads(error_body) if error_body else {}
+        except json.JSONDecodeError:
+            parsed = {}
+        error = parsed.get("error") if isinstance(parsed, dict) else None
+        if isinstance(error, dict):
+            message = error.get("message") or error_body or str(exc)
+        else:
+            message = error_body or str(exc)
+        raise GhostError(f"OpenAI image generation failed ({exc.code}): {message.strip()}") from exc
+    except urllib.error.URLError as exc:
+        raise GhostError(f"Could not reach OpenAI API: {exc.reason}") from exc
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise GhostError(f"OpenAI API returned invalid JSON: {exc}") from exc
+
+
 def api_get(site, resource_path, params=None):
     return ghost_request(site, "GET", resource_path, params=params)
 
@@ -267,6 +355,9 @@ def normalize_post(post, include_content=False):
         "slug": post.get("slug"),
         "status": post.get("status"),
         "url": post.get("url"),
+        "feature_image": post.get("feature_image"),
+        "feature_image_alt": post.get("feature_image_alt"),
+        "feature_image_caption": post.get("feature_image_caption"),
         "excerpt": post.get("custom_excerpt") or post.get("excerpt"),
         "custom_excerpt": post.get("custom_excerpt"),
         "meta_title": post.get("meta_title"),
@@ -331,6 +422,12 @@ def build_post_payload(args, creating=False):
         payload["meta_description"] = str(args.get("meta_description") or "").strip()
     if "canonical_url" in args:
         payload["canonical_url"] = str(args.get("canonical_url") or "").strip()
+    if "feature_image" in args:
+        payload["feature_image"] = str(args.get("feature_image") or "").strip()
+    if "feature_image_alt" in args:
+        payload["feature_image_alt"] = str(args.get("feature_image_alt") or "").strip()
+    if "feature_image_caption" in args:
+        payload["feature_image_caption"] = str(args.get("feature_image_caption") or "").strip()
     if "tags" in args:
         payload["tags"] = normalize_tag_names(args.get("tags") or [])
 
@@ -346,6 +443,136 @@ def build_post_payload(args, creating=False):
             payload["lexical"] = lexical_value
 
     return payload
+
+
+def update_existing_draft(site, existing, payload_updates):
+    existing_status = str(existing.get("status") or "").strip().lower()
+    if existing_status != "draft":
+        raise GhostError("Only existing draft posts can be updated. This tool will not edit published or scheduled posts.")
+
+    updated_at = str(existing.get("updated_at") or "").strip()
+    if not updated_at:
+        raise GhostError("Ghost did not return `updated_at` for the draft, so a safe update is not possible.")
+
+    post_id = str(existing.get("id") or "").strip()
+    if not post_id:
+        raise GhostError("Ghost did not return an id for the draft.")
+
+    payload = dict(payload_updates or {})
+    payload["updated_at"] = updated_at
+    payload["status"] = "draft"
+
+    params = {"formats": "html,lexical"}
+    if payload.get("html") and not payload.get("lexical"):
+        params["source"] = "html"
+
+    response = api_put(site, f"posts/{urllib.parse.quote(post_id, safe='')}/", {"posts": [payload]}, params=params)
+    posts = response.get("posts") if isinstance(response, dict) else []
+    if not isinstance(posts, list) or not posts:
+        raise GhostError("Ghost did not return the updated draft.")
+    return posts[0]
+
+
+def build_multipart_form_data(fields, files):
+    boundary = f"----SyntellaGhostBoundary{uuid.uuid4().hex}"
+    body = bytearray()
+
+    for name, value in fields:
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"))
+        body.extend(str(value).encode("utf-8"))
+        body.extend(b"\r\n")
+
+    for name, filename, content_type, content in files:
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(
+            f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode("utf-8")
+        )
+        body.extend(f"Content-Type: {content_type}\r\n\r\n".encode("utf-8"))
+        body.extend(content)
+        body.extend(b"\r\n")
+
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+    return bytes(body), boundary
+
+
+def sanitize_filename(value, fallback="ghost-feature-image"):
+    raw = "".join(char.lower() if char.isalnum() else "-" for char in str(value or "").strip())
+    cleaned = "-".join(part for part in raw.split("-") if part)
+    return cleaned[:80] or fallback
+
+
+def generate_feature_image(prompt, post_title=None):
+    image_prompt = str(prompt or "").strip()
+    if not image_prompt:
+        raise GhostError("`image_prompt` is required for feature image generation.")
+
+    payload = {
+        "model": OPENAI_IMAGE_MODEL,
+        "prompt": image_prompt,
+        "size": OPENAI_IMAGE_SIZE,
+        "quality": OPENAI_IMAGE_QUALITY,
+        "output_format": OPENAI_IMAGE_FORMAT,
+    }
+    response = openai_request("images/generations", payload)
+    data = response.get("data") if isinstance(response, dict) else []
+    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+        raise GhostError("OpenAI did not return image data.")
+
+    encoded = data[0].get("b64_json")
+    if not encoded:
+        raise GhostError("OpenAI did not return base64 image data.")
+    try:
+        image_bytes = base64.b64decode(encoded)
+    except (ValueError, binascii.Error) as exc:
+        raise GhostError("OpenAI returned invalid image data.") from exc
+
+    output_format = str(response.get("output_format") or OPENAI_IMAGE_FORMAT or "png").strip().lower() or "png"
+    mime_type = mimetypes.types_map.get(f".{output_format}", "image/png")
+    stem = sanitize_filename(post_title or image_prompt)
+    filename = f"{stem}.{output_format}"
+    return {
+        "bytes": image_bytes,
+        "filename": filename,
+        "mime_type": mime_type,
+        "model": str(response.get("model") or OPENAI_IMAGE_MODEL),
+        "prompt": image_prompt,
+        "revised_prompt": data[0].get("revised_prompt"),
+        "size": str(response.get("size") or OPENAI_IMAGE_SIZE),
+        "quality": str(response.get("quality") or OPENAI_IMAGE_QUALITY),
+        "output_format": output_format,
+    }
+
+
+def upload_ghost_image(site, image_bytes, filename, mime_type):
+    fields = [
+        ("purpose", "image"),
+        ("ref", filename),
+    ]
+    body, boundary = build_multipart_form_data(fields, [("file", filename, mime_type, image_bytes)])
+    response = ghost_binary_request(
+        site,
+        "POST",
+        "images/upload/",
+        body=body,
+        content_type=f"multipart/form-data; boundary={boundary}",
+    )
+    images = response.get("images") if isinstance(response, dict) else []
+    if not isinstance(images, list) or not images or not isinstance(images[0], dict):
+        raise GhostError("Ghost did not return an uploaded image URL.")
+    url = str(images[0].get("url") or "").strip()
+    if not url:
+        raise GhostError("Ghost returned an uploaded image without a URL.")
+    return {
+        "url": url,
+        "ref": images[0].get("ref"),
+    }
+
+
+def ensure_openai_image_ready():
+    api_key = str(os.environ.get("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        raise GhostError("OPENAI_API_KEY is missing, so the tool cannot generate an image.")
 
 
 def action_inspect(entry, _args):
@@ -444,33 +671,50 @@ def action_update_draft(entry, args):
     config = dict(entry.get("config") or {})
     site = normalize_site(args.get("site"), config)
     existing = fetch_post(site, post_id=args.get("post_id"), slug=args.get("slug"))
-    existing_status = str(existing.get("status") or "").strip().lower()
-    if existing_status != "draft":
-        raise GhostError("Only existing draft posts can be updated. This tool will not edit published or scheduled posts.")
-
     payload = build_post_payload(args, creating=False)
-    updated_at = str(existing.get("updated_at") or "").strip()
-    if not updated_at:
-        raise GhostError("Ghost did not return `updated_at` for the draft, so a safe update is not possible.")
-    payload["updated_at"] = updated_at
-    payload["status"] = "draft"
-
-    post_id = str(existing.get("id") or "").strip()
-    if not post_id:
-        raise GhostError("Ghost did not return an id for the draft.")
-
-    params = {"formats": "html,lexical"}
-    if payload.get("html") and not payload.get("lexical"):
-        params["source"] = "html"
-    response = api_put(site, f"posts/{urllib.parse.quote(post_id, safe='')}/", {"posts": [payload]}, params=params)
-    posts = response.get("posts") if isinstance(response, dict) else []
-    if not isinstance(posts, list) or not posts:
-        raise GhostError("Ghost did not return the updated draft.")
+    post = update_existing_draft(site, existing, payload)
     return {
         "ok": True,
         "action": "update_draft",
         "site": site["site"],
-        "post": normalize_post(posts[0], include_content=True),
+        "post": normalize_post(post, include_content=True),
+    }
+
+
+def action_add_feature_image(entry, args):
+    config = dict(entry.get("config") or {})
+    site = normalize_site(args.get("site"), config)
+    prompt = str(args.get("image_prompt") or args.get("prompt") or "").strip()
+    if not prompt:
+        raise GhostError("`image_prompt` is required for add_feature_image.")
+    ensure_openai_image_ready()
+
+    existing = fetch_post(site, post_id=args.get("post_id"), slug=args.get("slug"))
+    generated = generate_feature_image(prompt, post_title=existing.get("title"))
+    uploaded = upload_ghost_image(site, generated["bytes"], generated["filename"], generated["mime_type"])
+    post = update_existing_draft(
+        site,
+        existing,
+        {
+            "feature_image": uploaded["url"],
+        },
+    )
+    return {
+        "ok": True,
+        "action": "add_feature_image",
+        "site": site["site"],
+        "post": normalize_post(post, include_content=True),
+        "image": {
+            "url": uploaded["url"],
+            "filename": generated["filename"],
+            "mime_type": generated["mime_type"],
+            "model": generated["model"],
+            "prompt": generated["prompt"],
+            "revised_prompt": generated.get("revised_prompt"),
+            "size": generated["size"],
+            "quality": generated["quality"],
+            "output_format": generated["output_format"],
+        },
     }
 
 
@@ -485,6 +729,8 @@ def main():
             "get_post": action_get_post,
             "create_draft": action_create_draft,
             "update_draft": action_update_draft,
+            "add_feature_image": action_add_feature_image,
+            "add_image_to_blog": action_add_feature_image,
         }
         if action not in actions:
             raise GhostError(f"Unsupported Ghost action `{action}`.")

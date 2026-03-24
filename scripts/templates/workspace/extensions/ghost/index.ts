@@ -9,7 +9,15 @@ const helperPath = existsSync(path.join(__dirname, "ghost.py"))
   ? path.join(__dirname, "ghost.py")
   : path.join(__dirname, "status.py");
 
-const GHOST_ACTIONS = ["inspect", "list_posts", "get_post", "create_draft", "update_draft"] as const;
+const GHOST_ACTIONS = [
+  "inspect",
+  "list_posts",
+  "get_post",
+  "create_draft",
+  "update_draft",
+  "add_feature_image",
+  "add_image_to_blog",
+] as const;
 const POST_STATUSES = ["all", "draft", "published", "scheduled", "sent"] as const;
 
 type ToolArgs = {
@@ -23,10 +31,14 @@ type ToolArgs = {
   title?: string;
   html?: string;
   lexical?: string;
+  image_prompt?: string;
   excerpt?: string;
   meta_title?: string;
   meta_description?: string;
   canonical_url?: string;
+  feature_image?: string;
+  feature_image_alt?: string;
+  feature_image_caption?: string;
   tags?: string[];
 };
 
@@ -75,9 +87,17 @@ function summarize(result: any) {
   }
   if (result.post) {
     const post = result.post;
-    return `${result.action === "create_draft" ? "Created" : result.action === "update_draft" ? "Updated" : "Fetched"} Ghost post ${post.id}: ${
-      post.title || "(untitled)"
-    }\nStatus: ${formatStatus(post.status)}\nSlug: ${post.slug || "none"}\nUpdated: ${post.updated_at || "unknown"}`;
+    const actionLabel =
+      result.action === "create_draft"
+        ? "Created"
+        : result.action === "update_draft"
+          ? "Updated"
+          : result.action === "add_feature_image" || result.action === "add_image_to_blog"
+            ? "Added a feature image to"
+            : "Fetched";
+    return `${actionLabel} Ghost post ${post.id}: ${post.title || "(untitled)"}\nStatus: ${formatStatus(post.status)}\nSlug: ${
+      post.slug || "none"
+    }\nUpdated: ${post.updated_at || "unknown"}${post.feature_image ? `\nFeature image: ${post.feature_image}` : ""}`;
   }
   return "Ghost tool completed.";
 }
@@ -87,7 +107,7 @@ export default function register(api: any) {
     {
       name: "ghost",
       description:
-        "Inspect Ghost CMS setup, fetch existing posts, and create or update drafts only. This tool cannot publish.",
+        "Inspect Ghost CMS setup, fetch existing posts, create or update drafts only, and attach generated feature images to drafts. This tool cannot publish.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -121,11 +141,11 @@ export default function register(api: any) {
           },
           post_id: {
             type: "string",
-            description: "Ghost post ID for get_post or update_draft.",
+            description: "Ghost post ID for get_post, update_draft, add_feature_image, or add_image_to_blog.",
           },
           slug: {
             type: "string",
-            description: "Optional post slug for get_post, create_draft, or update_draft.",
+            description: "Optional post slug for get_post, create_draft, update_draft, add_feature_image, or add_image_to_blog.",
           },
           title: {
             type: "string",
@@ -138,6 +158,10 @@ export default function register(api: any) {
           lexical: {
             type: "string",
             description: "Lexical JSON string for create_draft or update_draft. Do not pass with `html`.",
+          },
+          image_prompt: {
+            type: "string",
+            description: "Prompt used to generate a feature image for add_feature_image or add_image_to_blog.",
           },
           excerpt: {
             type: "string",
@@ -154,6 +178,18 @@ export default function register(api: any) {
           canonical_url: {
             type: "string",
             description: "Optional canonical URL for create_draft or update_draft.",
+          },
+          feature_image: {
+            type: "string",
+            description: "Optional existing image URL for create_draft or update_draft.",
+          },
+          feature_image_alt: {
+            type: "string",
+            description: "Optional alt text for create_draft or update_draft.",
+          },
+          feature_image_caption: {
+            type: "string",
+            description: "Optional feature image caption for create_draft or update_draft.",
           },
           tags: {
             type: "array",

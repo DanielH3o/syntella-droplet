@@ -116,7 +116,6 @@
       card.dataset.taskStatus = task.status || 'backlog';
       card.innerHTML = `
         <h4 class="task-title">${utils.escapeHtml(task.title || 'Untitled task')}</h4>
-        <p class="text-muted text-sm" style="margin:0 0 12px 0;">${utils.escapeHtml(task.description || 'No description yet.')}</p>
         <div class="task-cost-row">
           <span>${utils.escapeHtml(utils.formatCurrency(task.estimated_cost || 0))} estimated</span>
           <span class="task-run-badge ${(task.open_run && !task.open_run.ended_at) ? 'is-open' : 'is-closed'}">${utils.escapeHtml(task.open_run && !task.open_run.ended_at ? 'run active' : (task.latest_run ? ui.formatRunStatus(task.latest_run) : 'no run'))}</span>
