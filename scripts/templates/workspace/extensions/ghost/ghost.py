@@ -688,16 +688,23 @@ def action_add_feature_image(entry, args):
     if not prompt:
         raise GhostError("`image_prompt` is required for add_feature_image.")
     ensure_openai_image_ready()
+    feature_image_alt = str(args.get("feature_image_alt") or "").strip()
+    feature_image_caption = str(args.get("feature_image_caption") or "").strip()
 
     existing = fetch_post(site, post_id=args.get("post_id"), slug=args.get("slug"))
     generated = generate_feature_image(prompt, post_title=existing.get("title"))
     uploaded = upload_ghost_image(site, generated["bytes"], generated["filename"], generated["mime_type"])
+    payload_updates = {
+        "feature_image": uploaded["url"],
+    }
+    if "feature_image_alt" in args:
+        payload_updates["feature_image_alt"] = feature_image_alt
+    if "feature_image_caption" in args:
+        payload_updates["feature_image_caption"] = feature_image_caption
     post = update_existing_draft(
         site,
         existing,
-        {
-            "feature_image": uploaded["url"],
-        },
+        payload_updates,
     )
     return {
         "ok": True,

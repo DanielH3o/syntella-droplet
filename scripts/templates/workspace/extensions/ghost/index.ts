@@ -185,11 +185,11 @@ export default function register(api: any) {
           },
           feature_image_alt: {
             type: "string",
-            description: "Optional alt text for create_draft or update_draft.",
+            description: "Optional alt text for create_draft, update_draft, add_feature_image, or add_image_to_blog.",
           },
           feature_image_caption: {
             type: "string",
-            description: "Optional feature image caption for create_draft or update_draft.",
+            description: "Optional feature image caption for create_draft, update_draft, add_feature_image, or add_image_to_blog.",
           },
           tags: {
             type: "array",
