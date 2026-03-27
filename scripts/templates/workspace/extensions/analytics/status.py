@@ -264,6 +264,13 @@ def previous_date_range(current_window):
     }
 
 
+def ga_date_range(window):
+    return {
+        "startDate": str(window.get("startDate") or ""),
+        "endDate": str(window.get("endDate") or ""),
+    }
+
+
 def metric(metric_name):
     return {"name": metric_name}
 
@@ -325,15 +332,13 @@ def parse_metric_value(raw):
 
 def run_report(token, property_id, payload):
     property_ref = f"properties/{normalize_property_id(property_id)}"
-    body = dict(payload or {})
-    body["property"] = property_ref
-    return api_post(f"{DATA_API_BASE}/{property_ref}:runReport", body, token)
+    return api_post(f"{DATA_API_BASE}/{property_ref}:runReport", dict(payload or {}), token)
 
 
 def run_tabular_report(token, property_id, *, metrics, dimensions=None, date_ranges=None, dimension_filter=None, order_bys=None, limit=None):
     payload = {
         "metrics": [metric(name) for name in metrics],
-        "dateRanges": date_ranges or [api_date_range(28)],
+        "dateRanges": [ga_date_range(item) for item in (date_ranges or [api_date_range(28)])],
     }
     if dimensions:
         payload["dimensions"] = [dimension(name) for name in dimensions]
@@ -342,7 +347,7 @@ def run_tabular_report(token, property_id, *, metrics, dimensions=None, date_ran
     if order_bys:
         payload["orderBys"] = order_bys
     if limit is not None:
-        payload["limit"] = str(max(1, min(int(limit), 1000)))
+        payload["limit"] = max(1, min(int(limit), 1000))
 
     response = run_report(token, property_id, payload)
     dimension_headers = [header.get("name") for header in response.get("dimensionHeaders") or [] if isinstance(header, dict)]
