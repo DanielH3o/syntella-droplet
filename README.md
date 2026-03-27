@@ -18,7 +18,8 @@ Opinionated bootstrap for running OpenClaw on a DigitalOcean Ubuntu droplet with
 - Spawn flow still aborts if the main bot token changes during spawn (safety guard)
 - Exposes the Syntella API for main-site portal access over Tailscale on port `8788`
 - Keeps the Syntella API firewalled to `tailscale0` and loopback
-- Optionally sets up a legacy public workspace frontend on nginx when `FRONTEND_ENABLED=1`
+- Optionally sets up a legacy workspace frontend on nginx when `FRONTEND_ENABLED=1`
+- When `FRONTEND_ALLOWED_IP` is set, that frontend is IP-allowlisted; when it is omitted, the frontend is public
 - Sends a startup ping message to the configured Discord channel after bootstrap (includes tailnet/API context, and frontend URL only if explicitly enabled)
 - Installs a global `/usr/local/bin/openclaw` shim (so root/sudo users can run `openclaw ...` without switching users)
 

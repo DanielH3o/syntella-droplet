@@ -35,7 +35,8 @@ DISCORD_GUILD_ID=""
 DISCORD_CHANNEL_ID=""
 FRONTEND_ENABLED="${FRONTEND_ENABLED:-0}"
 FRONTEND_URL=""
-# Lock frontend to this source IP/CIDR (required when FRONTEND_ENABLED=1), e.g. "203.0.113.10" or "203.0.113.0/24".
+# Optional source IP/CIDR allowlist for the legacy nginx frontend, e.g. "203.0.113.10" or "203.0.113.0/24".
+# Leave blank to expose the frontend publicly.
 FRONTEND_ALLOWED_IP="${FRONTEND_ALLOWED_IP:-}"
 SYNTELLA_PORTAL_API_TOKEN="${SYNTELLA_PORTAL_API_TOKEN:-}"
 SYNTELLA_ENABLE_DROPLET_FRONTEND="${SYNTELLA_ENABLE_DROPLET_FRONTEND:-0}"
@@ -1576,12 +1577,17 @@ Syntella updates should preserve this directory.
 EOF
   fi
 
-  if [[ -z "$FRONTEND_ALLOWED_IP" ]]; then
-    echo "FRONTEND_ALLOWED_IP is required when FRONTEND_ENABLED=1 (example: 203.0.113.10 or 203.0.113.0/24)."
-    exit 1
+  local frontend_access_rules=""
+  if [[ -n "$FRONTEND_ALLOWED_IP" ]]; then
+    frontend_access_rules="$(cat <<EOF
+    allow 127.0.0.1;
+    allow ${FRONTEND_ALLOWED_IP};
+    deny all;
+EOF
+)"
   fi
 
-  # Apply nginx config with strict source-IP allowlist and local API proxy.
+  # Apply nginx config for the legacy project frontend and local API proxy.
   sudo tee /etc/nginx/nginx.conf >/dev/null <<EOF
 user www-data;
 worker_processes auto;
@@ -1602,9 +1608,7 @@ http {
     listen [::]:80 default_server;
     server_name _;
 
-    allow 127.0.0.1;
-    allow ${FRONTEND_ALLOWED_IP};
-    deny all;
+${frontend_access_rules}
 
     root ${project_dir};
     index index.html;
@@ -1857,7 +1861,11 @@ print_summary() {
   if [[ -n "$FRONTEND_URL" ]]; then
     echo "- Frontend: ${FRONTEND_URL}"
     echo "- Admin page: ${FRONTEND_URL}/admin"
-    echo "- Frontend allowlist: ${FRONTEND_ALLOWED_IP}"
+    if [[ -n "$FRONTEND_ALLOWED_IP" ]]; then
+      echo "- Frontend allowlist: ${FRONTEND_ALLOWED_IP}"
+    else
+      echo "- Frontend allowlist: public"
+    fi
   else
     echo "- Frontend: disabled"
   fi
